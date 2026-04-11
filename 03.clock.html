@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MoMA Edition: Azure Spring</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@100;400;800&family=Inter:wght@900&display=swap');
+
+        :root {
+            /* 봄 하늘을 상징하는 색상들 */
+            --sky-top: #7ecdec; 
+            --sky-bottom: #e0f4ff;
+            --sakura-pink: #ffffff; /* 하늘 대비 가독성을 위해 더 밝게 조정 */
+            --sakura-accent: #ffb7c5;
+            --text-main: #1a3a5a; /* 어두운 푸른색 텍스트로 가독성 확보 */
+        }
+
+        body, html {
+            margin: 0; padding: 0;
+            width: 100%; height: 100%;
+            overflow: hidden;
+            background: linear-gradient(to bottom, var(--sky-top), var(--sky-bottom));
+            color: var(--text-main);
+            font-family: 'JetBrains+Mono', monospace;
+        }
+
+        #art-canvas {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            z-index: 1;
+        }
+
+        .overlay-ui {
+            position: absolute;
+            inset: 0;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 10;
+            pointer-events: none;
+        }
+
+        .moma-header {
+            position: absolute;
+            top: 40px;
+            left: 40px;
+            font-size: 0.7rem;
+            letter-spacing: 0.5em;
+            opacity: 0.7;
+            text-transform: uppercase;
+            font-weight: 800;
+        }
+
+        .time-container {
+            text-align: center;
+        }
+
+        .digital-clock {
+            font-family: 'Inter', sans-serif;
+            font-size: clamp(4rem, 18vw, 15rem);
+            font-weight: 900;
+            letter-spacing: -0.02em;
+            line-height: 1;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            /* 푸른 하늘 위에서 글자가 뜨도록 가벼운 광채 효과 */
+            filter: drop-shadow(0 0 30px rgba(255, 255, 255, 0.4));
+        }
+
+        .clock-label {
+            position: absolute;
+            bottom: 120px;
+            left: 40px;
+            font-size: 0.6rem;
+            letter-spacing: 0.2em;
+            opacity: 0.6;
+            line-height: 1.6;
+        }
+
+        .artwork-spec {
+            position: absolute;
+            bottom: 120px;
+            right: 40px;
+            text-align: right;
+            border-left: 1px solid rgba(26, 58, 90, 0.2);
+            padding-left: 20px;
+        }
+
+        .artwork-spec h2 {
+            font-size: 0.9rem;
+            font-weight: 800;
+            letter-spacing: 0.1em;
+        }
+
+        .artwork-spec p {
+            font-size: 0.6rem;
+            opacity: 0.7;
+            margin-top: 5px;
+        }
+
+        .status-dot {
+            width: 6px;
+            height: 6px;
+            background: #ff6b81;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 10px;
+            animation: blink 1.5s infinite;
+        }
+
+        @keyframes blink {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.3; transform: scale(1.2); }
+        }
+    </style>
+</head>
+<body>
+
+    <canvas id="art-canvas"></canvas>
+
+    <div class="moma-header">MOMA / MEDIA ART / AZURE SPRING</div>
+
+    <div class="overlay-ui">
+        <div class="time-container">
+            <div class="digital-clock" id="clock">
+                <span id="hour">00</span>
+                <span style="opacity: 0.2">:</span>
+                <span id="min">00</span>
+                <span style="opacity: 0.2; font-size: 0.4em; margin-left: 10px;" id="sec">00</span>
+            </div>
+            <div class="mt-4 tracking-[1em] text-[0.6rem] opacity-60 font-bold uppercase">Vernal Atmosphere Dynamics v6.0</div>
+        </div>
+    </div>
+
+    <div class="clock-label">
+        <div class="flex items-center"><span class="status-dot"></span> LIVE SPRING RENDERING</div>
+        <div id="full-date">LOADING DATE...</div>
+        <div>NEW YORK, NY / SEOUL, KR</div>
+    </div>
+
+    <div class="artwork-spec">
+        <h2>AZURE DRIFT</h2>
+        <p>Atmospheric Petal Accumulation</p>
+        <p>© 2026 DIGITAL ART ARCHIVE</p>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('art-canvas');
+        const ctx = canvas.getContext('2d');
+        const hourEl = document.getElementById('hour');
+        const minEl = document.getElementById('min');
+        const secEl = document.getElementById('sec');
+        const dateEl = document.getElementById('full-date');
+
+        let width, height;
+        let fallingPetals = [];
+        let accumulatedPetals = [];
+        let groundHeights = [];
+        const petalColors = ['#ffffff', '#fff0f3', '#ffdeeb', '#ffb7c5'];
+
+        class Petal {
+            constructor() {
+                this.init();
+            }
+
+            init() {
+                this.x = Math.random() * width;
+                this.y = Math.random() * height - height;
+                this.size = Math.random() * 5 + 3;
+                this.speedY = Math.random() * 0.7 + 0.5;
+                this.speedX = Math.random() * 0.6 - 0.3;
+                this.angle = Math.random() * Math.PI * 2;
+                this.spin = Math.random() * 0.02 * (Math.random() > 0.5 ? 1 : -1);
+                this.color = petalColors[Math.floor(Math.random() * petalColors.length)];
+                this.opacity = Math.random() * 0.7 + 0.3;
+                this.flip = Math.random();
+                this.flipSpeed = Math.random() * 0.03;
+            }
+
+            update() {
+                this.y += this.speedY;
+                this.x += this.speedX + Math.sin(this.y * 0.008) * 0.3;
+                this.angle += this.spin;
+                this.flip += this.flipSpeed;
+
+                const groundIdx = Math.floor(this.x);
+                if (groundIdx >= 0 && groundIdx < width && this.y >= groundHeights[groundIdx]) {
+                    this.y = groundHeights[groundIdx];
+                    
+                    const accRange = 6;
+                    const amount = this.size * 0.25;
+                    for (let i = groundIdx - accRange; i <= groundIdx + accRange; i++) {
+                        if (i >= 0 && i < width) {
+                            const dist = 1 - Math.abs(i - groundIdx) / accRange;
+                            groundHeights[i] -= amount * dist;
+                        }
+                    }
+                    accumulatedPetals.push(this);
+                    return true;
+                }
+                
+                if (this.y > height + 20) {
+                    this.y = -20;
+                    this.x = Math.random() * width;
+                }
+                return false;
+            }
+
+            draw() {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.rotate(this.angle);
+                ctx.beginPath();
+                ctx.globalAlpha = this.opacity;
+                ctx.fillStyle = this.color;
+                
+                // 꽃잎에 아주 살짝 그림자를 주어 입체감 표현
+                ctx.shadowBlur = 4;
+                ctx.shadowColor = 'rgba(0,0,0,0.05)';
+                
+                const currentWidth = this.size * Math.cos(this.flip);
+                ctx.ellipse(0, 0, Math.abs(currentWidth), this.size, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+
+        function resize() {
+            width = canvas.width = window.innerWidth;
+            height = canvas.height = window.innerHeight;
+            groundHeights = new Array(width).fill(height - 10); // 바닥에서 살짝 위부터 시작
+            createPetals();
+        }
+
+        function createPetals() {
+            fallingPetals = [];
+            accumulatedPetals = [];
+            for (let i = 0; i < 200; i++) {
+                fallingPetals.push(new Petal());
+            }
+        }
+
+        function updateClock() {
+            const now = new Date();
+            hourEl.textContent = String(now.getHours()).padStart(2, '0');
+            minEl.textContent = String(now.getMinutes()).padStart(2, '0');
+            secEl.textContent = String(now.getSeconds()).padStart(2, '0');
+            const dateOptions = { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' };
+            dateEl.textContent = now.toLocaleDateString('en-US', dateOptions).toUpperCase();
+        }
+
+        function animate() {
+            // 배경 그라데이션 매 프레임 다시 그리기
+            const skyGrad = ctx.createLinearGradient(0, 0, 0, height);
+            skyGrad.addColorStop(0, '#7ecdec'); 
+            skyGrad.addColorStop(1, '#e0f4ff');
+            ctx.fillStyle = skyGrad;
+            ctx.fillRect(0, 0, width, height);
+
+            // 쌓인 꽃잎 먼저 그리기
+            accumulatedPetals.forEach(p => p.draw());
+
+            // 떨어지는 꽃잎 업데이트 및 그리기
+            for (let i = fallingPetals.length - 1; i >= 0; i--) {
+                const p = fallingPetals[i];
+                if (p.update()) {
+                    fallingPetals.splice(i, 1);
+                } else {
+                    p.draw();
+                }
+            }
+
+            // 꽃잎 수 유지
+            if (fallingPetals.length < 250 && Math.random() < 0.15) {
+                fallingPetals.push(new Petal());
+            }
+
+            // 바닥 안개 효과 (부드럽게 쌓인 느낌 극대화)
+            const mist = ctx.createLinearGradient(0, height - 100, 0, height);
+            mist.addColorStop(0, 'rgba(255, 255, 255, 0)');
+            mist.addColorStop(1, 'rgba(255, 255, 255, 0.4)');
+            ctx.fillStyle = mist;
+            ctx.fillRect(0, height - 100, width, 100);
+
+            updateClock();
+            requestAnimationFrame(animate);
+        }
+
+        window.addEventListener('resize', resize);
+        window.onload = () => {
+            resize();
+            animate();
+        };
+    </script>
+</body>
+</html>
