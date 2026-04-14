@@ -6,6 +6,7 @@
   <title>Artemis II Lobby Gallery</title>
   <style>
     * { box-sizing: border-box; }
+
     html, body {
       margin: 0;
       width: 100%;
@@ -155,16 +156,19 @@
 
     @media (max-width: 1100px) {
       html, body { overflow: auto; }
+
       #slideshow-container {
         height: auto;
         min-height: 100vh;
         grid-template-columns: 1fr;
         grid-template-rows: 58vh auto;
       }
+
       #info-panel {
         border-left: none;
         border-top: 1px solid rgba(255,255,255,0.08);
       }
+
       #audio-toggle {
         right: 20px;
         bottom: 20px;
@@ -181,7 +185,7 @@
 
     <aside id="info-panel">
       <div id="info-kicker">NASA ARTEMIS II</div>
-      <div id="info-count">1 / 34</div>
+      <div id="info-count">1 / 42</div>
       <div id="info-title">아르테미스 II 달 사진</div>
       <div id="info-desc">데이터 로딩 중...</div>
       <div id="info-source">
@@ -197,11 +201,13 @@
 
   <button id="audio-toggle">음악 켜기</button>
 
-  <!-- loop 제거, source도 JS에서 관리 -->
   <audio id="bgm" preload="auto"></audio>
 
   <script>
-    const imageData = [
+    // =========================
+    // 1) 기존 이미지들: 매 사이클마다 랜덤
+    // =========================
+    const randomImages = [
       {
         title: "오리온 창문 너머의 지구",
         desc: "NASA 우주비행사이자 Artemis II 사령관 리드 와이즈먼이 지구 전이 주입 기동을 마친 뒤, 오리온 우주선 창문을 통해 촬영한 지구 모습입니다.",
@@ -374,6 +380,52 @@
       }
     ];
 
+    // =========================
+    // 2) 추가 8장: 항상 마지막에 고정 순서
+    // =========================
+    const endingImages = [
+      {
+        title: "Hello, World",
+        desc: "NASA 우주비행사이자 Artemis II 사령관 리드 와이즈먼이 2026년 4월 2일, 달 전이 주입 기동을 마친 뒤 오리온 우주선 창문을 통해 촬영한 지구 모습입니다.",
+        files: ["https://www.genspark.ai/api/files/s/XZXqig0T"]
+      },
+      {
+        title: "Moon Joy",
+        desc: "2026년 4월 7일, 달 뒷면 비행을 마치고 달의 중력권을 벗어나 지구로 귀환하던 Artemis II 승무원들이 오리온 내부에서 서로를 껴안는 장면입니다. 네 사람은 2023년 4월 선발된 뒤 지난 3년간 함께 훈련해 왔습니다.",
+        files: ["https://www.genspark.ai/api/files/s/1JHtUHZL"]
+      },
+      {
+        title: "Four Thumbs Up",
+        desc: "2026년 4월 7일, 달 뒷면을 돌아 달의 중력권을 벗어난 뒤 지구로 향하던 Artemis II 승무원들이 오리온 안에서 함께 기념 촬영을 하며 엄지를 들어 보이는 모습입니다.",
+        files: ["https://www.genspark.ai/api/files/s/gYc5C2yk"]
+      },
+      {
+        title: "Artemis II Recovery",
+        desc: "2026년 4월 10일 금요일, 캘리포니아 앞 태평양에 Artemis II 승무원을 태운 NASA의 오리온 우주선이 착수하는 장면입니다. 10일간의 달 왕복 비행을 마친 뒤 NASA와 미 해군, 미 공군 팀이 USS John P. Murtha로 승무원과 우주선을 회수하고 있습니다.",
+        files: ["https://www.genspark.ai/api/files/s/bxrPOANH"]
+      },
+      {
+        title: "Artemis II Recovery",
+        desc: "2026년 4월 10일 금요일, 캘리포니아 앞 태평양에서 Artemis II 승무원과 오리온 우주선을 회수하기 위해 미 해군 잠수요원과 회수팀이 작전에 나선 장면입니다. NASA와 미군 팀이 USS John P. Murtha로 회수 작업을 진행하고 있습니다.",
+        files: ["https://www.genspark.ai/api/files/s/8xdNLLiB"]
+      },
+      {
+        title: "Artemis II Crew Recovery",
+        desc: "2026년 4월 10일 금요일 오후 5시 7분(PDT, EDT 오후 8시 7분), 샌디에이고 인근 태평양에 착수한 뒤 오리온을 빠져나온 Artemis II 승무원들이 구명보트 위에서 회수팀과 헬리콥터의 지원을 받는 장면입니다. NASA 착수·회수팀과 미군이 승무원 구조를 돕고 있습니다.",
+        files: ["https://www.genspark.ai/api/files/s/AvQfpEKH"]
+      },
+      {
+        title: "jsc2026e022266",
+        desc: "2026년 4월 10일 금요일 오후 5시 7분(PDT, EDT 오후 8시 7분), 캘리포니아 샌디에이고 인근 태평양에 착수한 NASA의 오리온 우주선 모습입니다. NASA 착수·회수팀과 미군이 Artemis II 승무원을 우주선에서 안전하게 분리하기 위한 작업을 조율하고 있습니다.",
+        files: ["https://www.genspark.ai/api/files/s/i3HMWJxU"]
+      },
+      {
+        title: "Artemis II Crew Return",
+        desc: "2026년 4월 11일, 거의 10일간의 달 왕복 여정을 마치고 휴스턴 존슨우주센터 인근 엘링턴 공항에 도착한 Artemis II 승무원들이 가족과 동료들 앞에서 짧은 소감을 전하는 장면입니다.",
+        files: ["https://www.genspark.ai/api/files/s/s4Pw8g9u"]
+      }
+    ];
+
     const img1 = document.getElementById('img1');
     const img2 = document.getElementById('img2');
     const infoCount = document.getElementById('info-count');
@@ -384,7 +436,7 @@
     const audioStartBtn = document.getElementById('audio-start-btn');
     const audioToggle = document.getElementById('audio-toggle');
 
-    let playOrder = [...imageData];
+    let playOrder = [];
     let currentIndex = 0;
     let currentVisibleImg = img1;
     let slideTimer = null;
@@ -392,8 +444,7 @@
     let isTransitioning = false;
 
     // =========================
-    // 오디오 재생 목록 설계
-    // bgm -> bgm1 -> bgm2 -> 다시 bgm
+    // 오디오 재생 목록
     // =========================
     const playlist = [
       "moon/bgm.mp3",
@@ -411,10 +462,21 @@
       }
     }
 
+    function buildPlayOrder() {
+      const shuffledRandomImages = [...randomImages];
+      shuffleArray(shuffledRandomImages);
+      return [...shuffledRandomImages, ...endingImages];
+    }
+
     function updateInfo(item, index) {
       infoCount.textContent = `${index + 1} / ${playOrder.length}`;
       infoTitle.textContent = item.title;
       infoDesc.textContent = item.desc;
+    }
+
+    function normalizeIndex(index) {
+      const len = playOrder.length;
+      return ((index % len) + len) % len;
     }
 
     function resolveImageSrc(item) {
@@ -430,8 +492,9 @@
 
           const candidate = candidates[pointer++];
           const tester = new Image();
+
           tester.onload = () => resolve(candidate);
-          tester.onerror = tryNext;
+          tester.onerror = () => tryNext();
           tester.src = candidate;
         }
 
@@ -439,46 +502,78 @@
       });
     }
 
+    function loadImageInto(imgEl, src, alt) {
+      return new Promise((resolve, reject) => {
+        imgEl.onload = null;
+        imgEl.onerror = null;
+        imgEl.alt = alt;
+
+        imgEl.onload = () => resolve();
+        imgEl.onerror = () => reject(new Error(`이미지 로드 실패: ${src}`));
+
+        // 동일한 src가 반복되어도 안전하게 다시 로드
+        imgEl.src = "";
+        imgEl.src = src;
+
+        if (imgEl.complete && imgEl.naturalWidth > 0) {
+          resolve();
+        }
+      });
+    }
+
     async function renderIndex(targetIndex) {
-      if (isTransitioning) return;
+      if (isTransitioning || playOrder.length === 0) return false;
+
       isTransitioning = true;
 
-      const item = playOrder[targetIndex];
-      const nextImg = currentVisibleImg === img1 ? img2 : img1;
+      let tries = 0;
+      let index = normalizeIndex(targetIndex);
 
-      try {
-        const src = await resolveImageSrc(item);
+      while (tries < playOrder.length) {
+        const item = playOrder[index];
+        const nextImg = currentVisibleImg === img1 ? img2 : img1;
 
-        await new Promise((resolve, reject) => {
-          nextImg.onload = resolve;
-          nextImg.onerror = reject;
-          nextImg.src = src;
-          nextImg.alt = item.title;
-        });
+        try {
+          const src = await resolveImageSrc(item);
+          await loadImageInto(nextImg, src, item.title);
 
-        currentVisibleImg.classList.remove('active');
-        nextImg.classList.add('active');
-        currentVisibleImg = nextImg;
-        currentIndex = targetIndex;
-        updateInfo(item, currentIndex);
+          currentVisibleImg.classList.remove('active');
+          nextImg.classList.add('active');
 
-      } catch (error) {
-        console.warn(error.message);
-        setTimeout(goNext, 100);
-      } finally {
-        isTransitioning = false;
+          currentVisibleImg = nextImg;
+          currentIndex = index;
+          updateInfo(item, currentIndex);
+
+          isTransitioning = false;
+          return true;
+        } catch (error) {
+          console.warn(error.message);
+          index = (index + 1) % playOrder.length;
+          tries += 1;
+        }
       }
+
+      isTransitioning = false;
+      console.error('표시 가능한 이미지가 없습니다.');
+      return false;
     }
 
     async function goNext() {
-      startAutoPlay();
+      if (isTransitioning || playOrder.length === 0) return;
 
       let nextIndex = currentIndex + 1;
+
       if (nextIndex >= playOrder.length) {
-        shuffleArray(playOrder);
+        playOrder = buildPlayOrder();
         nextIndex = 0;
       }
+
       await renderIndex(nextIndex);
+    }
+
+    async function goPrev() {
+      if (isTransitioning || playOrder.length === 0) return;
+      await renderIndex(currentIndex - 1);
     }
 
     function startAutoPlay() {
@@ -498,7 +593,7 @@
     }
 
     // =========================
-    // 오디오 제어 함수
+    // 오디오 제어
     // =========================
     function setTrack(index) {
       currentTrackIndex = index;
@@ -506,42 +601,40 @@
       bgm.load();
     }
 
-    async function playCurrentTrack() {
+    async function playTrackAt(index, attempts = 0) {
+      if (!playlist.length) return false;
+
+      const safeIndex = ((index % playlist.length) + playlist.length) % playlist.length;
+      setTrack(safeIndex);
+
       try {
         await bgm.play();
         audioOverlay.classList.add('hidden');
         audioToggle.textContent = '음악 끄기';
+        return true;
       } catch (error) {
-        alert('오디오 재생에 실패했습니다. moon/bgm.mp3, moon/bgm1.mp3, moon/bgm2.mp3 경로를 확인해 주세요.');
+        if (attempts < playlist.length - 1) {
+          return playTrackAt(safeIndex + 1, attempts + 1);
+        }
+        console.warn('오디오 재생 실패:', error);
+        return false;
       }
     }
 
     async function playNextTrack() {
-      currentTrackIndex = (currentTrackIndex + 1) % playlist.length;
-      setTrack(currentTrackIndex);
-
-      try {
-        await bgm.play();
-        audioToggle.textContent = '음악 끄기';
-        audioOverlay.classList.add('hidden');
-      } catch (error) {
-        console.warn('다음 트랙 재생 실패:', error);
-      }
+      await playTrackAt(currentTrackIndex + 1);
     }
 
     async function startMusic() {
-      await playCurrentTrack();
+      const ok = await playTrackAt(currentTrackIndex);
+      if (!ok) {
+        alert('오디오 재생에 실패했습니다. moon/bgm.mp3, moon/bgm1.mp3, moon/bgm2.mp3 파일 경로를 확인해 주세요.');
+      }
     }
 
     async function toggleMusic() {
       if (bgm.paused) {
-        try {
-          await bgm.play();
-          audioToggle.textContent = '음악 끄기';
-          audioOverlay.classList.add('hidden');
-        } catch (error) {
-          console.warn('음악 재생 실패:', error);
-        }
+        await playTrackAt(currentTrackIndex);
       } else {
         bgm.pause();
         audioToggle.textContent = '음악 켜기';
@@ -552,9 +645,7 @@
       const unlock = async () => {
         if (bgm.paused) {
           try {
-            await bgm.play();
-            audioToggle.textContent = '음악 끄기';
-            audioOverlay.classList.add('hidden');
+            await playTrackAt(currentTrackIndex);
           } catch (error) {}
         }
         document.removeEventListener('click', unlock);
@@ -570,18 +661,28 @@
     function bindEvents() {
       audioStartBtn.addEventListener('click', startMusic);
       audioToggle.addEventListener('click', toggleMusic);
-
-      // 현재 곡이 끝나면 다음 곡으로 자동 전환
       bgm.addEventListener('ended', playNextTrack);
+
+      bgm.addEventListener('error', () => {
+        console.warn('현재 오디오 파일을 불러오지 못했습니다. 다음 트랙을 시도합니다.');
+        playNextTrack();
+      });
+
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowRight') goNext();
+        if (e.key === 'ArrowLeft') goPrev();
+        if (e.key === ' ') {
+          e.preventDefault();
+          isPaused = !isPaused;
+        }
+      });
     }
 
     async function init() {
-      shuffleArray(playOrder);
+      playOrder = buildPlayOrder();
       currentIndex = 0;
 
-      // 첫 곡은 bgm.mp3부터 시작
       setTrack(0);
-
       await renderIndex(0);
       startAutoPlay();
       bindEvents();
