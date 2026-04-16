@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>Finger Spotlight</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; display: flex; justify-content: center; align-items: center; min-height: 100vh; overflow: hidden; }
+    #output { display: block; max-width: 100vw; max-height: 100vh; }
+    #status {
+      position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      color: #fff; font: 16px/2 monospace; text-align: center;
+      background: rgba(0,0,0,0.6); padding: 16px 28px; border-radius: 8px;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="output"></canvas>
+  <video id="bgVideo" src="finger_spotlight/test.mp4" loop muted autoplay playsinline style="display:none"></video>
+  <video id="webcam"  autoplay muted playsinline style="display:none"></video>
+  <div id="status">클릭하여 시작</div>
+
+  <!-- MediaPipe Hands (legacy API) -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+  <script>
+    // ─── 파라미터 ───────────────────────────────────────────────
+    let RADIUS      = 120;
+    const SOFTNESS  = 0.35;
+    let DARK_ALPHA  = 0.93;
+    let BRIGHT_BOOST = 0.95;
+    // ────────────────────────────────────────────────────────────
+
+    const canvas    = document.getElementById('output');
+    const ctx       = canvas.getContext('2d');
+    const bgVideo   = document.getElementById('bgVideo');
+    const webcam    = document.getElementById('webcam');
+    const statusEl  = document.getElementById('status');
+
+    let W = 1280, H = 720;
+    let fingerPos   = null;   // { x, y }
+    let bgReady     = false;
+    let fallbackBg  = null;   // 영상 로드 실패 시 canvas 꽃밭
+
+    // Off-screen canvases (매 프레임 재사용)
+    const brightCanvas = document.createElement('canvas');
+    const brightCtx    = brightCanvas.getContext('2d');
+    const maskCanvas   = document.createElement('canvas');
+    const maskCtx      = maskCanvas.getContext('2d');
+
+    // ─── 크기 설정 ───────────────────────────────────────────────
+    function setSize(w, h) {
+      W = w; H = h;
+      [canvas, brightCanvas, maskCanvas].forEach(c => {
+        c.width = W; c.height = H;
+      });
+    }
+    setSize(1280, 720);
+
+    // ─── 꽃밭 fallback 배경 생성 ────────────────────────────────
+    function makeFallbackBg() {
+      fallbackBg = document.createElement('canvas');
+      fallbackBg.width = W; fallbackBg.height = H;
+      const fc = fallbackBg.getContext('2d');
+
+      const grad = fc.createLinearGradient(0, 0, 0, H);
+      grad.addColorStop(0, 'rgb(0,55,0)');
+      grad.addColorStop(1, 'rgb(0,135,0)');
+      fc.fillStyle = grad;
+      fc.fillRect(0, 0, W, H);
+
+      const COLORS = ['#FFDD1E','#FF69B4','#FFFACD','#DA70D6','#FFA500','#90EE90'];
+      const rng = mulberry32(42);
+      for (let i = 0; i < 420; i++) {
+        const cx = rng() * W, cy = rng() * H;
+        const size = 6 + rng() * 16;
+        const n    = Math.floor(5 + rng() * 4);
+        const col  = COLORS[Math.floor(rng() * COLORS.length)];
+        for (let p = 0; p < n; p++) {
+          const a = (2 * Math.PI * p) / n;
+          fc.beginPath();
+          fc.arc(cx + size * Math.cos(a), cy + size * Math.sin(a), size / 2, 0, Math.PI * 2);
+          fc.fillStyle = col; fc.fill();
+        }
+        fc.beginPath();
+        fc.arc(cx, cy, size / 3, 0, Math.PI * 2);
+        fc.fillStyle = '#FFD700'; fc.fill();
+      }
+    }
+
+    // 재현 가능한 난수 (Python rng seed=42 와 동일 분포)
+    function mulberry32(seed) {
+      return function() {
+        seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+        let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+        t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+        return ((t ^ t >>> 14) >>> 0) / 4294967296;
+      };
+    }
+
+    // ─── 배경 영상 로드 ──────────────────────────────────────────
+    bgVideo.addEventListener('loadedmetadata', () => {
+      setSize(bgVideo.videoWidth || 1280, bgVideo.videoHeight || 720);
+    });
+    bgVideo.addEventListener('canplay', () => {
+      bgVideo.play().catch(() => {});
+      bgReady = true;
+    });
+    bgVideo.addEventListener('error', () => {
+      console.warn('test.mp4 로드 실패 → 꽃밭 배경 사용');
+      makeFallbackBg();
+      bgReady = true;
+    });
+    // 8초 뒤에도 영상이 안 열리면 fallback
+    setTimeout(() => {
+      if (!bgReady) { makeFallbackBg(); bgReady = true; }
+    }, 8000);
+
+    // 사용자 클릭 시 영상 재생 보장 (autoplay 차단 브라우저 대응)
+    document.addEventListener('click', () => {
+      bgVideo.play().catch(() => {});
+    }, { once: true });
+
+    function getBg() {
+      if (fallbackBg)               return fallbackBg;
+      if (bgVideo.readyState >= 2)  return bgVideo;
+      return null;
+    }
+
+    // ─── 렌더 루프 즉시 시작 (웹캠과 독립적) ────────────────────
+    drawFrame();
+
+    // ─── Spotlight 렌더링 ────────────────────────────────────────
+    function drawFrame() {
+      requestAnimationFrame(drawFrame);
+      const bg = getBg();
+      if (!bg) return;
+
+      const darkPct   = Math.round((1 - DARK_ALPHA) * 100);
+      const brightPct = Math.round(BRIGHT_BOOST * 100);
+
+      // 1. 어두운 배경
+      ctx.filter = `brightness(${darkPct}%)`;
+      ctx.drawImage(bg, 0, 0, W, H);
+      ctx.filter = 'none';
+
+      if (fingerPos) {
+        const { x, y } = fingerPos;
+        const hardR = RADIUS * (1 - SOFTNESS);
+
+        // 2. 밝은 레이어
+        brightCtx.clearRect(0, 0, W, H);
+        brightCtx.filter = `brightness(${brightPct}%)`;
+        brightCtx.drawImage(bg, 0, 0, W, H);
+        brightCtx.filter = 'none';
+
+        // 3. Spotlight 마스크 (중심=불투명, 가장자리=투명)
+        maskCtx.clearRect(0, 0, W, H);
+        const g = maskCtx.createRadialGradient(x, y, hardR, x, y, RADIUS);
+        g.addColorStop(0, 'rgba(255,255,255,1)');
+        g.addColorStop(1, 'rgba(255,255,255,0)');
+        maskCtx.fillStyle = g;
+        maskCtx.fillRect(0, 0, W, H);
+
+        // 4. 마스크로 밝은 레이어 클리핑
+        brightCtx.globalCompositeOperation = 'destination-in';
+        brightCtx.drawImage(maskCanvas, 0, 0);
+        brightCtx.globalCompositeOperation = 'source-over';
+
+        // 5. 밝은 레이어 합성
+        ctx.drawImage(brightCanvas, 0, 0);
+
+        // 손가락 끝 점
+        ctx.beginPath();
+        ctx.arc(x, y, 5, 0, Math.PI * 2);
+        ctx.fillStyle = 'white';
+        ctx.fill();
+      }
+
+      // HUD
+      ctx.fillStyle = 'rgba(200,200,200,0.9)';
+      ctx.font = '15px monospace';
+      ctx.fillText(`Radius: ${RADIUS}px  Bright: ${BRIGHT_BOOST.toFixed(2)}x  Dark: ${DARK_ALPHA.toFixed(2)}`, 12, 28);
+      ctx.fillStyle = 'rgba(160,160,160,0.85)';
+      ctx.font = '13px monospace';
+      ctx.fillText('+/- : 반경 조절   W/S : 밝기 조절', 12, 50);
+    }
+
+    // ─── MediaPipe Hands 초기화 ──────────────────────────────────
+    const hands = new Hands({
+      locateFile: (f) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${f}`
+    });
+    hands.setOptions({
+      maxNumHands: 1,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.6,
+      minTrackingConfidence: 0.6,
+    });
+    hands.onResults((results) => {
+      if (results.multiHandLandmarks?.length > 0) {
+        const tip = results.multiHandLandmarks[0][8]; // INDEX_FINGER_TIP
+        // x 좌우 반전 (거울 모드)
+        fingerPos = { x: (1 - tip.x) * W, y: tip.y * H };
+      } else {
+        fingerPos = null;
+      }
+    });
+
+    // ─── 웹캠 & Camera 유틸 시작 ─────────────────────────────────
+    statusEl.textContent = '웹캠 권한 요청 중...';
+    navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } })
+      .then((stream) => {
+        webcam.srcObject = stream;
+        const camera = new Camera(webcam, {
+          onFrame: async () => {
+            await hands.send({ image: webcam });
+          },
+          width: 640, height: 480,
+        });
+        camera.start();
+        statusEl.style.display = 'none';
+      })
+      .catch((e) => {
+        statusEl.textContent = '웹캠 오류: ' + e.message;
+      });
+
+    // ─── 키보드 조작 ─────────────────────────────────────────────
+    document.addEventListener('keydown', (e) => {
+      switch (e.key) {
+        case '+': case '=':
+          RADIUS = Math.min(RADIUS + 10, 400); break;
+        case '-': case '_':
+          RADIUS = Math.max(RADIUS - 10, 20); break;
+        case 'w': case 'W':
+          BRIGHT_BOOST = Math.min(+(BRIGHT_BOOST + 0.05).toFixed(2), 3.0); break;
+        case 's': case 'S':
+          BRIGHT_BOOST = Math.max(+(BRIGHT_BOOST - 0.05).toFixed(2), 1.0); break;
+      }
+    });
+  </script>
+</body>
+</html>
