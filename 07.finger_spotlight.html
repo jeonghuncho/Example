@@ -5,8 +5,8 @@
   <title>Finger Spotlight</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background: #000; display: flex; justify-content: center; align-items: center; min-height: 100vh; overflow: hidden; }
-    #output { display: block; max-width: 100vw; max-height: 100vh; }
+    body { background: #000; overflow: hidden; }
+    #output { display: block; width: 100vw; height: 100vh; }
     #status {
       position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
       color: #fff; font: 16px/2 monospace; text-align: center;
@@ -38,7 +38,7 @@
     const webcam    = document.getElementById('webcam');
     const statusEl  = document.getElementById('status');
 
-    let W = 1280, H = 720;
+    let W = window.innerWidth, H = window.innerHeight;
     let fingerPos   = null;   // { x, y }
     let bgReady     = false;
     let fallbackBg  = null;   // 영상 로드 실패 시 canvas 꽃밭
@@ -56,7 +56,8 @@
         c.width = W; c.height = H;
       });
     }
-    setSize(1280, 720);
+    setSize(window.innerWidth, window.innerHeight);
+    window.addEventListener('resize', () => setSize(window.innerWidth, window.innerHeight));
 
     // ─── 꽃밭 fallback 배경 생성 ────────────────────────────────
     function makeFallbackBg() {
@@ -101,7 +102,7 @@
 
     // ─── 배경 영상 로드 ──────────────────────────────────────────
     bgVideo.addEventListener('loadedmetadata', () => {
-      setSize(bgVideo.videoWidth || 1280, bgVideo.videoHeight || 720);
+      // 캔버스 크기는 뷰포트 기준 유지
     });
     bgVideo.addEventListener('canplay', () => {
       bgVideo.play().catch(() => {});
@@ -128,6 +129,16 @@
       return null;
     }
 
+    // 영상을 canvas 전체에 cover 방식으로 그리기
+    function drawCover(targetCtx, src) {
+      const sw = src.videoWidth  || src.width;
+      const sh = src.videoHeight || src.height;
+      const scale = Math.max(W / sw, H / sh);
+      const ox = (W - sw * scale) / 2;
+      const oy = (H - sh * scale) / 2;
+      targetCtx.drawImage(src, ox, oy, sw * scale, sh * scale);
+    }
+
     // ─── 렌더 루프 즉시 시작 (웹캠과 독립적) ────────────────────
     drawFrame();
 
@@ -142,7 +153,7 @@
 
       // 1. 어두운 배경
       ctx.filter = `brightness(${darkPct}%)`;
-      ctx.drawImage(bg, 0, 0, W, H);
+      drawCover(ctx, bg);
       ctx.filter = 'none';
 
       if (fingerPos) {
@@ -152,7 +163,7 @@
         // 2. 밝은 레이어
         brightCtx.clearRect(0, 0, W, H);
         brightCtx.filter = `brightness(${brightPct}%)`;
-        brightCtx.drawImage(bg, 0, 0, W, H);
+        drawCover(brightCtx, bg);
         brightCtx.filter = 'none';
 
         // 3. Spotlight 마스크 (중심=불투명, 가장자리=투명)
