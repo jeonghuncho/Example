@@ -1,15 +1,16 @@
-ㅁ<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>인사 - 상시 음성 인식</title>
-    
+   
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 
     <style>
         :root {
-            --neon-blue: #00f2ff;
+            /* 요청하신 색상 #DEC654로 변경 */
+            --neon-blue: #DEC654; 
             --deep-space: #010103;
             --glow-gold: #ffdd00;
         }
@@ -30,22 +31,23 @@
             z-index: 1;
         }
 
-        /* --- 상단 안내 문구 스타일 추가 --- */
         #instruction-text {
             position: absolute;
-            top: 50px;
+            top: 80px;
             left: 50%;
             transform: translateX(-50%);
             z-index: 10;
             color: white;
-            font-size: 1.8rem;
-            font-weight: 300;
-            letter-spacing: 3px;
-            text-shadow: 0 0 15px rgba(0, 242, 255, 0.8), 0 0 30px rgba(0, 242, 255, 0.4);
-            pointer-events: none; /* 마우스 클릭을 방해하지 않음 */
+            font-size: 3.5rem;
+            font-weight: 700;
+            letter-spacing: 5px;
+            /* 텍스트 글로우 효과도 테마 색상에 맞춰 조정 */
+            text-shadow: 0 0 20px rgba(222, 198, 84, 0.9), 0 0 40px rgba(222, 198, 84, 0.5);
+            pointer-events: none;
             text-align: center;
-            opacity: 0; /* 처음엔 숨김 */
-            transition: opacity 1.5s ease; /* 부드럽게 나타남 */
+            white-space: nowrap;
+            opacity: 0;
+            transition: opacity 1.5s ease;
         }
 
         .ui-panel {
@@ -68,10 +70,10 @@
             width: 100%;
             background: rgba(255, 255, 255, 0.05);
             backdrop-filter: blur(15px);
-            border: 1px solid rgba(0, 242, 255, 0.3);
+            border: 1px solid rgba(222, 198, 84, 0.3);
             border-radius: 50px;
             overflow: hidden;
-            box-shadow: 0 0 30px rgba(0, 242, 255, 0.1);
+            box-shadow: 0 0 30px rgba(222, 198, 84, 0.1);
             transition: all 0.3s ease;
             pointer-events: auto;
         }
@@ -112,7 +114,7 @@
             cursor: pointer;
             letter-spacing: 3px;
             transition: all 0.3s ease;
-            box-shadow: 0 0 15px rgba(0, 242, 255, 0.2);
+            box-shadow: 0 0 15px rgba(222, 198, 84, 0.2);
         }
 
         #start-btn:hover {
@@ -158,24 +160,25 @@
         renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
         document.getElementById('canvas-container').appendChild(renderer.domElement);
 
-        const particleCount = 45000; 
+        const particleCount = 45000;
         const positions = new Float32Array(particleCount * 3);
         const targetPositions = new Float32Array(particleCount * 3);
-        const velocities = new Float32Array(particleCount * 3); 
+        const velocities = new Float32Array(particleCount * 3);
         const colors = new Float32Array(particleCount * 3);
         const geometry = new THREE.BufferGeometry();
 
         let isTextMode = false;
-        let isInitialLoad = true; 
+        let isInitialLoad = true;
         let mouse = new THREE.Vector3(-1000, -1000, 0);
-        let clearTimer = null; // 10초 타이머 변수
+        let clearTimer = null;
 
-        const baseColor = new THREE.Color(0x00f2ff);
+        // --- 파티클 기본 색상을 #DEC654로 변경 ---
+        const baseColor = new THREE.Color(0xDEC654); 
         const goldColor = new THREE.Color(0xffdd00);
 
         function createSphere() {
             isTextMode = false;
-            textInput.value = ""; 
+            textInput.value = "";
             const radius = 30;
             for (let i = 0; i < particleCount; i++) {
                 const i3 = i * 3;
@@ -183,7 +186,7 @@
                 const v = Math.random();
                 const theta = 2 * Math.PI * u;
                 const phi = Math.acos(2 * v - 1);
-                
+               
                 targetPositions[i3] = radius * Math.sin(phi) * Math.cos(theta);
                 targetPositions[i3 + 1] = radius * Math.sin(phi) * Math.sin(theta);
                 targetPositions[i3 + 2] = radius * Math.cos(phi);
@@ -193,17 +196,17 @@
         function textToPoints(text) {
             if(!text) return;
             isTextMode = true;
-            isInitialLoad = false; 
+            isInitialLoad = false;
             const fontSize = 100;
             tCtx.font = `bold ${fontSize}px Arial`;
-            
+           
             const metrics = tCtx.measureText(text);
             const textWidth = Math.ceil(metrics.width) + 40;
             const textHeight = fontSize * 1.5;
 
             textCanvas.width = textWidth;
             textCanvas.height = textHeight;
-            
+           
             tCtx.fillStyle = 'white';
             tCtx.font = `bold ${fontSize}px Arial`;
             tCtx.textAlign = 'center';
@@ -215,7 +218,7 @@
             const pixels = imageData.data;
             const points = [];
 
-            const maxWorldWidth = 140; 
+            const maxWorldWidth = 140;
             let scale = 0.6;
             if ((textWidth * scale) > maxWorldWidth) {
                 scale = maxWorldWidth / textWidth;
@@ -236,20 +239,19 @@
             for (let i = 0; i < particleCount; i++) {
                 const i3 = i * 3;
                 const p = points[i % points.length];
-                const noise = 0.5; 
+                const noise = 0.5;
                 targetPositions[i3] = p.x + (Math.random() - 0.5) * noise;
                 targetPositions[i3 + 1] = p.y + (Math.random() - 0.5) * noise;
                 targetPositions[i3 + 2] = (Math.random() - 0.5) * noise;
             }
         }
 
-        // 초기 파티클 위치 설정
         for (let i = 0; i < particleCount; i++) {
             const i3 = i * 3;
             positions[i3] = (Math.random() - 0.5) * 1200;
             positions[i3 + 1] = (Math.random() - 0.5) * 1200;
             positions[i3 + 2] = (Math.random() - 0.5) * 1200;
-            
+           
             colors[i3] = baseColor.r;
             colors[i3 + 1] = baseColor.g;
             colors[i3 + 2] = baseColor.b;
@@ -276,7 +278,7 @@
             const rect = renderer.domElement.getBoundingClientRect();
             const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
             const y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-            
+           
             const vector = new THREE.Vector3(x, y, 0.5);
             vector.unproject(camera);
             const dir = vector.sub(camera.position).normalize();
@@ -289,14 +291,14 @@
 
             const posAttr = geometry.attributes.position;
             const colAttr = geometry.attributes.color;
-            
+           
             const mouseInfluenceRadius = isTextMode ? 12 : 25;
             let currentLerpSpeed = isInitialLoad ? 0.015 : 0.05;
-            const friction = isInitialLoad ? 0.95 : 0.85;   
+            const friction = isInitialLoad ? 0.95 : 0.85;  
 
             for (let i = 0; i < particleCount; i++) {
                 const i3 = i * 3;
-                
+               
                 let tx = targetPositions[i3];
                 let ty = targetPositions[i3 + 1];
                 let tz = targetPositions[i3 + 2];
@@ -357,16 +359,13 @@
             renderer.render(scene, camera);
         }
 
-        // ==========================================
-        // 상시 대기 음성 인식 로직
-        // ==========================================
         function resetClearTimer() {
             if (clearTimer) clearTimeout(clearTimer);
-            
+           
             clearTimer = setTimeout(() => {
                 if (isTextMode) {
                     textInput.placeholder = "10초간 입력이 없어 초기화되었습니다.";
-                    createSphere(); 
+                    createSphere();
                 }
             }, 10000);
         }
@@ -374,11 +373,11 @@
         if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
             const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
             const recognition = new SpeechRecognition();
-            
+           
             recognition.lang = 'ko-KR';
-            recognition.interimResults = false; 
+            recognition.interimResults = false;
             recognition.maxAlternatives = 1;
-            recognition.continuous = false; 
+            recognition.continuous = false;
 
             recognition.onstart = function() {
                 textInput.placeholder = "🎤 듣고 있습니다. 말씀해주세요...";
@@ -387,15 +386,13 @@
             recognition.onresult = function(event) {
                 const transcript = event.results[0][0].transcript;
                 const cleanText = transcript.replace(/[.,!?]/g, '').trim().substring(0, 25);
-                
+               
                 if (cleanText) {
                     textInput.value = cleanText;
-                    textToPoints(cleanText); 
-                    resetClearTimer(); 
+                    textToPoints(cleanText);
+                    resetClearTimer();
                 }
             };
-
-            recognition.onerror = function(event) {};
 
             recognition.onend = function() {
                 textInput.placeholder = "잠깐 휴식 중... (곧 다시 듣습니다)";
@@ -412,7 +409,6 @@
                 loadingScreen.style.opacity = '0';
                 setTimeout(() => {
                     loadingScreen.style.display = 'none';
-                    // 시작 버튼이 사라진 후 상단 안내 문구 표시
                     instructionText.style.opacity = '1';
                     setTimeout(() => { isInitialLoad = false; }, 4000);
                 }, 500);
@@ -427,7 +423,6 @@
         } else {
             alert("이 브라우저는 음성 인식을 지원하지 않습니다. Chrome을 사용해주세요.");
         }
-        // ==========================================
 
         window.onload = () => {
             animate();
