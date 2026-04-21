@@ -1,15 +1,34 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
+<<<<<<< HEAD
    <meta charset="UTF-8">
    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-   <title>인사 - 상시 음성 인식!</title>
+   <title>인사 - 상시 음성 인식!!</title>
  
    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
    <!-- MediaPipe Hands 라이브러리 추가 -->
    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
 
+=======
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>인사 - 상시 음성 인식</title>
+   
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- MediaPipe Hands 라이브러리 추가 -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+    <style>
+        :root {
+            /* 요청하신 색상 #DEC654로 변경 */
+            --neon-blue: #DEC654; 
+            --deep-space: #010103;
+            --glow-gold: #ffdd00;
+        }
+>>>>>>> 66f848e2750b7da9bb1a33c144a7959837691136
 
    <style>
        :root {
@@ -20,6 +39,7 @@
        }
 
 
+<<<<<<< HEAD
        body, html {
            margin: 0; padding: 0;
            width: 100%; height: 100%;
@@ -28,14 +48,61 @@
            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
            touch-action: none;
        }
+=======
+        #instruction-text {
+            position: absolute;
+            top: 30px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 10;
+            color: white;
+            pointer-events: none;
+            text-align: center;
+            white-space: nowrap;
+            opacity: 0;
+            transition: opacity 1.5s ease;
+        }
+
+        #instruction-text .main-text {
+            font-size: 3.5rem;
+            font-weight: 700;
+            letter-spacing: 5px;
+            /* 텍스트 글로우 효과도 테마 색상에 맞춰 조정 */
+            text-shadow: 0 0 20px rgba(222, 198, 84, 0.9), 0 0 40px rgba(222, 198, 84, 0.5);
+        }
+
+        #instruction-text .sub-text {
+            font-size: 1.2rem;
+            font-weight: 400;
+            letter-spacing: 2px;
+            margin-top: 15px;
+            color: rgba(255, 255, 255, 0.7);
+            text-shadow: 0 0 10px rgba(222, 198, 84, 0.5);
+        }
+>>>>>>> 66f848e2750b7da9bb1a33c144a7959837691136
 
 
+<<<<<<< HEAD
        #canvas-container {
            position: absolute;
            top: 0; left: 0;
            width: 100%; height: 100%;
            z-index: 1;
        }
+=======
+        .input-group {
+            display: flex;
+            width: 100%;
+            background: rgba(255, 255, 255, 0.05);
+            backdrop-filter: blur(15px);
+            border: 1px solid rgba(222, 198, 84, 0.3);
+            border-radius: 50px;
+            overflow: hidden;
+            box-shadow: 0 0 30px rgba(222, 198, 84, 0.1);
+            transition: all 0.3s ease;
+            pointer-events: auto;
+        }
+>>>>>>> 66f848e2750b7da9bb1a33c144a7959837691136
 
 
        #instruction-text {
@@ -52,6 +119,22 @@
            transition: opacity 1.5s ease;
        }
 
+<<<<<<< HEAD
+=======
+        #start-btn {
+            background: transparent;
+            color: var(--neon-blue);
+            border: 2px solid var(--neon-blue);
+            padding: 15px 40px;
+            font-size: 1.2rem;
+            font-weight: bold;
+            border-radius: 30px;
+            cursor: pointer;
+            letter-spacing: 3px;
+            transition: all 0.3s ease;
+            box-shadow: 0 0 15px rgba(222, 198, 84, 0.2);
+        }
+>>>>>>> 66f848e2750b7da9bb1a33c144a7959837691136
 
        #instruction-text .main-text {
            font-size: 3.5rem;
@@ -61,6 +144,7 @@
            text-shadow: 0 0 20px rgba(222, 198, 84, 0.9), 0 0 40px rgba(222, 198, 84, 0.5);
        }
 
+<<<<<<< HEAD
 
        #instruction-text .sub-text {
            font-size: 1.2rem;
@@ -187,20 +271,83 @@
            opacity: 0;
        }
    </style>
+=======
+        #text-canvas {
+            display: none;
+        }
+
+        /* 웹캠 비디오 - 손 추적용 (화면에 표시하지 않음) */
+        #webcam {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 160px;
+            height: 120px;
+            border-radius: 10px;
+            border: 1px solid rgba(222, 198, 84, 0.3);
+            z-index: 5;
+            transform: scaleX(-1); /* 거울 모드 */
+            opacity: 0.3;
+            display: none; /* 화면에서 숨김 */
+        }
+
+        /* 손가락 커서 표시 */
+        #finger-cursor {
+            position: absolute;
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(255, 221, 0, 0.8), rgba(222, 198, 84, 0.3));
+            box-shadow: 0 0 20px #ffdd00, 0 0 40px #DEC654;
+            pointer-events: none;
+            z-index: 9;
+            transform: translate(-50%, -50%);
+            transition: opacity 0.3s ease;
+            opacity: 0;
+        }
+    </style>
+>>>>>>> 66f848e2750b7da9bb1a33c144a7959837691136
 </head>
 <body>
 
 
+<<<<<<< HEAD
    <div id="loading-screen">
        <button id="start-btn">마이크 켜고 시작하기</button>
    </div>
+=======
+    <div id="instruction-text">
+        <div class="main-text">자유롭게 아무 말이나 해보세요 ✨</div>
+        <div class="sub-text">모니터를 향해 검지손가락을 피고 움직이면 신기한 일이!</div>
+    </div>
+>>>>>>> 66f848e2750b7da9bb1a33c144a7959837691136
 
 
+<<<<<<< HEAD
    <div id="instruction-text">
        <div class="main-text">자유롭게 아무 말이나 해보세요 ✨</div>
        <div class="sub-text">모니터와 1M 정도 떨어져서 손바닥을 피고 움직이면 신기한 일이!</div>
    </div>
 
+=======
+    <!-- 웹캠 비디오 요소 (손 추적용) -->
+    <video id="webcam" autoplay playsinline></video>
+    <!-- 손가락 커서 표시 -->
+    <div id="finger-cursor"></div>
+
+    <canvas id="text-canvas"></canvas>
+    <div id="canvas-container"></div>
+
+    <script>
+        const textInput = document.getElementById('text-input');
+        const loadingScreen = document.getElementById('loading-screen');
+        const startBtn = document.getElementById('start-btn');
+        const instructionText = document.getElementById('instruction-text');
+        const textCanvas = document.getElementById('text-canvas');
+        const tCtx = textCanvas.getContext('2d', { willReadFrequently: true });
+        const webcamVideo = document.getElementById('webcam');
+        const fingerCursor = document.getElementById('finger-cursor');
+>>>>>>> 66f848e2750b7da9bb1a33c144a7959837691136
 
    <div class="ui-panel">
        <div class="input-group">
@@ -208,6 +355,7 @@
        </div>
    </div>
 
+<<<<<<< HEAD
 
    <!-- 웹캠 비디오 요소 (손 추적용) -->
    <video id="webcam" autoplay playsinline></video>
@@ -228,16 +376,80 @@
        const tCtx = textCanvas.getContext('2d', { willReadFrequently: true });
        const webcamVideo = document.getElementById('webcam');
        const fingerCursor = document.getElementById('finger-cursor');
+=======
+        const particleCount = 45000;
+        const positions = new Float32Array(particleCount * 3);
+        const targetPositions = new Float32Array(particleCount * 3);
+        const velocities = new Float32Array(particleCount * 3);
+        const colors = new Float32Array(particleCount * 3);
+        const geometry = new THREE.BufferGeometry();
+
+        let isTextMode = false;
+        let isInitialLoad = true;
+        let mouse = new THREE.Vector3(-1000, -1000, 0);
+        let clearTimer = null;
+
+        // --- 파티클 기본 색상을 #DEC654로 변경 ---
+        const baseColor = new THREE.Color(0xDEC654); 
+        const goldColor = new THREE.Color(0xffdd00);
+
+        function createSphere() {
+            isTextMode = false;
+            textInput.value = "";
+            const radius = 30;
+            for (let i = 0; i < particleCount; i++) {
+                const i3 = i * 3;
+                const u = Math.random();
+                const v = Math.random();
+                const theta = 2 * Math.PI * u;
+                const phi = Math.acos(2 * v - 1);
+               
+                targetPositions[i3] = radius * Math.sin(phi) * Math.cos(theta);
+                targetPositions[i3 + 1] = radius * Math.sin(phi) * Math.sin(theta);
+                targetPositions[i3 + 2] = radius * Math.cos(phi);
+            }
+        }
+
+        function textToPoints(text) {
+            if(!text) return;
+            isTextMode = true;
+            isInitialLoad = false;
+            const fontSize = 100;
+            tCtx.font = `bold ${fontSize}px Arial`;
+           
+            const metrics = tCtx.measureText(text);
+            const textWidth = Math.ceil(metrics.width) + 40;
+            const textHeight = fontSize * 1.5;
+
+            textCanvas.width = textWidth;
+            textCanvas.height = textHeight;
+           
+            tCtx.fillStyle = 'white';
+            tCtx.font = `bold ${fontSize}px Arial`;
+            tCtx.textAlign = 'center';
+            tCtx.textBaseline = 'middle';
+            tCtx.clearRect(0, 0, textCanvas.width, textCanvas.height);
+            tCtx.fillText(text, textCanvas.width / 2, textCanvas.height / 2);
+>>>>>>> 66f848e2750b7da9bb1a33c144a7959837691136
 
 
+<<<<<<< HEAD
        const scene = new THREE.Scene();
        const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
        renderer.setSize(window.innerWidth, window.innerHeight);
        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
        document.getElementById('canvas-container').appendChild(renderer.domElement);
+=======
+            const maxWorldWidth = 140;
+            let scale = 0.6;
+            if ((textWidth * scale) > maxWorldWidth) {
+                scale = maxWorldWidth / textWidth;
+            }
+>>>>>>> 66f848e2750b7da9bb1a33c144a7959837691136
 
 
+<<<<<<< HEAD
        const particleCount = 45000;
        const positions = new Float32Array(particleCount * 3);
        const targetPositions = new Float32Array(particleCount * 3);
@@ -245,6 +457,29 @@
        const colors = new Float32Array(particleCount * 3);
        const geometry = new THREE.BufferGeometry();
 
+=======
+            for (let i = 0; i < particleCount; i++) {
+                const i3 = i * 3;
+                const p = points[i % points.length];
+                const noise = 0.5;
+                targetPositions[i3] = p.x + (Math.random() - 0.5) * noise;
+                targetPositions[i3 + 1] = p.y + (Math.random() - 0.5) * noise;
+                targetPositions[i3 + 2] = (Math.random() - 0.5) * noise;
+            }
+        }
+
+        for (let i = 0; i < particleCount; i++) {
+            const i3 = i * 3;
+            positions[i3] = (Math.random() - 0.5) * 1200;
+            positions[i3 + 1] = (Math.random() - 0.5) * 1200;
+            positions[i3 + 2] = (Math.random() - 0.5) * 1200;
+           
+            colors[i3] = baseColor.r;
+            colors[i3 + 1] = baseColor.g;
+            colors[i3 + 2] = baseColor.b;
+        }
+        createSphere();
+>>>>>>> 66f848e2750b7da9bb1a33c144a7959837691136
 
        let isTextMode = false;
        let isInitialLoad = true;
@@ -256,6 +491,123 @@
        const baseColor = new THREE.Color(0xDEC654);
        const goldColor = new THREE.Color(0xffdd00);
 
+<<<<<<< HEAD
+=======
+        // ==================================================
+        // 손가락 추적 기능 - 마우스 커서 대체
+        // ==================================================
+        
+        // 화면 좌표를 3D 월드 좌표로 변환하는 함수 (기존 마우스 로직과 동일)
+        function updateMouseFromScreen(screenX, screenY) {
+            const rect = renderer.domElement.getBoundingClientRect();
+            const x = ((screenX - rect.left) / rect.width) * 2 - 1;
+            const y = -((screenY - rect.top) / rect.height) * 2 + 1;
+           
+            const vector = new THREE.Vector3(x, y, 0.5);
+            vector.unproject(camera);
+            const dir = vector.sub(camera.position).normalize();
+            const distance = -camera.position.z / dir.z;
+            mouse = camera.position.clone().add(dir.multiplyScalar(distance));
+        }
+
+        // 부드러운 움직임을 위한 좌표 스무딩 변수
+        let smoothedFingerX = 0;
+        let smoothedFingerY = 0;
+        let isFingerDetected = false;
+
+        // 검지손가락이 펴져있는지 확인하는 함수
+        // MediaPipe 랜드마크: 8번=검지 끝, 6번=검지 중간(PIP), 5번=검지 시작(MCP)
+        function isIndexFingerExtended(landmarks) {
+            const indexTip = landmarks[8];
+            const indexPip = landmarks[6];
+            const indexMcp = landmarks[5];
+            
+            // 검지가 펴져있으면 tip의 y좌표가 pip보다 위(작음)에 있음
+            return indexTip.y < indexPip.y && indexPip.y < indexMcp.y;
+        }
+
+        // MediaPipe Hands 결과 처리
+        function onHandsResults(results) {
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0];
+                
+                // 검지손가락이 펴져있는지 확인
+                if (isIndexFingerExtended(landmarks)) {
+                    // 검지손가락 끝(landmark 8)의 위치
+                    const indexTip = landmarks[8];
+                    
+                    // MediaPipe는 0~1 정규화 좌표를 반환
+                    // 거울 모드이므로 x를 반전
+                    const screenX = (1 - indexTip.x) * window.innerWidth;
+                    const screenY = indexTip.y * window.innerHeight;
+                    
+                    // 부드러운 움직임을 위한 지수 평활화
+                    if (!isFingerDetected) {
+                        smoothedFingerX = screenX;
+                        smoothedFingerY = screenY;
+                    } else {
+                        const smoothing = 0.3;
+                        smoothedFingerX = smoothedFingerX * (1 - smoothing) + screenX * smoothing;
+                        smoothedFingerY = smoothedFingerY * (1 - smoothing) + screenY * smoothing;
+                    }
+                    
+                    isFingerDetected = true;
+                    
+                    // 파티클 상호작용을 위해 mouse 좌표 업데이트
+                    updateMouseFromScreen(smoothedFingerX, smoothedFingerY);
+                    
+                    // 손가락 커서 UI 표시
+                    fingerCursor.style.left = smoothedFingerX + 'px';
+                    fingerCursor.style.top = smoothedFingerY + 'px';
+                    fingerCursor.style.opacity = '1';
+                } else {
+                    // 검지가 펴져있지 않으면 커서 숨김
+                    isFingerDetected = false;
+                    mouse = new THREE.Vector3(-1000, -1000, 0);
+                    fingerCursor.style.opacity = '0';
+                }
+            } else {
+                // 손이 감지되지 않으면 커서 숨김
+                isFingerDetected = false;
+                mouse = new THREE.Vector3(-1000, -1000, 0);
+                fingerCursor.style.opacity = '0';
+            }
+        }
+
+        // MediaPipe Hands 초기화
+        let hands = null;
+        let mediapipeCamera = null;
+
+        function initHandTracking() {
+            hands = new Hands({
+                locateFile: (file) => {
+                    return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+                }
+            });
+            
+            hands.setOptions({
+                maxNumHands: 1,
+                modelComplexity: 1,
+                minDetectionConfidence: 0.7,
+                minTrackingConfidence: 0.5
+            });
+            
+            hands.onResults(onHandsResults);
+            
+            // 웹캠 시작
+            mediapipeCamera = new Camera(webcamVideo, {
+                onFrame: async () => {
+                    await hands.send({ image: webcamVideo });
+                },
+                width: 640,
+                height: 480
+            });
+            
+            mediapipeCamera.start().catch((err) => {
+                console.error("웹캠 시작 오류:", err);
+            });
+        }
+>>>>>>> 66f848e2750b7da9bb1a33c144a7959837691136
 
        function createSphere() {
            isTextMode = false;
@@ -274,6 +626,7 @@
            }
        }
 
+<<<<<<< HEAD
 
        function textToPoints(text) {
            if(!text) return;
@@ -285,6 +638,21 @@
            const metrics = tCtx.measureText(text);
            const textWidth = Math.ceil(metrics.width) + 40;
            const textHeight = fontSize * 1.5;
+=======
+            const posAttr = geometry.attributes.position;
+            const colAttr = geometry.attributes.color;
+           
+            const mouseInfluenceRadius = isTextMode ? 12 : 25;
+            let currentLerpSpeed = isInitialLoad ? 0.015 : 0.05;
+            const friction = isInitialLoad ? 0.95 : 0.85;  
+
+            for (let i = 0; i < particleCount; i++) {
+                const i3 = i * 3;
+               
+                let tx = targetPositions[i3];
+                let ty = targetPositions[i3 + 1];
+                let tz = targetPositions[i3 + 2];
+>>>>>>> 66f848e2750b7da9bb1a33c144a7959837691136
 
 
            textCanvas.width = textWidth;
@@ -333,6 +701,7 @@
            }
        }
 
+<<<<<<< HEAD
 
        for (let i = 0; i < particleCount; i++) {
            const i3 = i * 3;
@@ -345,8 +714,30 @@
            colors[i3 + 2] = baseColor.b;
        }
        createSphere();
+=======
+        function resetClearTimer() {
+            if (clearTimer) clearTimeout(clearTimer);
+           
+            clearTimer = setTimeout(() => {
+                if (isTextMode) {
+                    textInput.placeholder = "10초간 입력이 없어 초기화되었습니다.";
+                    createSphere();
+                }
+            }, 10000);
+        }
+
+        if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+            const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+            const recognition = new SpeechRecognition();
+           
+            recognition.lang = 'ko-KR';
+            recognition.interimResults = false;
+            recognition.maxAlternatives = 1;
+            recognition.continuous = false;
+>>>>>>> 66f848e2750b7da9bb1a33c144a7959837691136
 
 
+<<<<<<< HEAD
        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
@@ -365,6 +756,51 @@
        scene.add(pointsObj);
        camera.position.z = 100;
 
+=======
+            recognition.onresult = function(event) {
+                const transcript = event.results[0][0].transcript;
+                const cleanText = transcript.replace(/[.,!?]/g, '').trim().substring(0, 25);
+               
+                if (cleanText) {
+                    textInput.value = cleanText;
+                    textToPoints(cleanText);
+                    resetClearTimer();
+                }
+            };
+
+            recognition.onend = function() {
+                textInput.placeholder = "잠깐 휴식 중... (곧 다시 듣습니다)";
+                setTimeout(() => {
+                    try {
+                        recognition.start();
+                    } catch(e) {
+                        console.log("재시작 대기 중...");
+                    }
+                }, 1000);
+            };
+
+            startBtn.addEventListener('click', () => {
+                loadingScreen.style.opacity = '0';
+                setTimeout(() => {
+                    loadingScreen.style.display = 'none';
+                    instructionText.style.opacity = '1';
+                    setTimeout(() => { isInitialLoad = false; }, 4000);
+                }, 500);
+
+                try {
+                    recognition.start();
+                } catch(e) {
+                    console.error("마이크 시작 오류", e);
+                }
+                
+                // 손 추적도 함께 시작
+                initHandTracking();
+            });
+
+        } else {
+            alert("이 브라우저는 음성 인식을 지원하지 않습니다. Chrome을 사용해주세요.!");
+        }
+>>>>>>> 66f848e2750b7da9bb1a33c144a7959837691136
 
        // ==================================================
        // 손가락 추적 기능 - 마우스 커서 대체
