@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <link rel="icon" type="image/png" href="../Assets/favicon.png">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Falling Cards</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: #000;
+            overflow: hidden;
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+
+        .container {
+            position: relative;
+            width: 100%;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .clock-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 15px; /* 카드가 많아졌으므로 간격을 약간 줄임 */
+        }
+
+        .card-stack {
+            position: relative;
+            perspective: 1000px;
+            width: 200px;
+            height: 317px;
+        }
+
+        .card-label {
+            font-size: 12px;
+            color: inherit;
+            font-family: 'Helvetica Neue', Arial, sans-serif;
+            letter-spacing: 1px;
+            margin-top: 30px;
+        }
+
+        .card {
+            position: absolute;
+            width: 200px;
+            height: 317px;
+            border-radius: 16px;
+            border: 3px solid #000;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            font-family: 'Bebas Neue', sans-serif;
+            font-size: 280px;
+            line-height: 0.85;
+            font-weight: 400;
+            color: #000;
+            transition: none;
+            transform-origin: center center;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+            padding-top: 10px;
+        }
+
+        .card.falling {
+            transition: transform 0.8s cubic-bezier(0.87, 0, 0.13, 1);
+        }
+
+        .card.intro {
+            transition: transform 0.6s cubic-bezier(0.87, 0, 0.13, 1);
+        }
+
+        /* 시, 분, 초 텍스트 스타일 */
+        .time-label {
+            font-family: 'Apple SD Gothic Neo', 'Malgun Gothic', 'Noto Sans KR', sans-serif;
+            font-size: 60px;
+            font-weight: 700;
+            color: #ffffff;
+            margin: 0 5px;
+            opacity: 0; /* 초기 상태 투명 */
+            transform: translateY(-30px);
+            transition: opacity 0.8s cubic-bezier(0.87, 0, 0.13, 1), transform 0.8s cubic-bezier(0.87, 0, 0.13, 1);
+        }
+
+        /* 애니메이션으로 나타날 때 적용될 클래스 */
+        .time-label.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        /* 반응형: 데스크톱이 좁을 때 (라벨 때문에 가로가 길어져서 추가) */
+        @media (max-width: 1500px) {
+            .clock-container { gap: 10px; }
+            .card-stack { width: 140px; height: 222px; }
+            .card { width: 140px; height: 222px; font-size: 190px; }
+            .time-label { font-size: 45px; }
+        }
+
+        /* 반응형: 모바일 해상도 */
+        @media (max-width: 768px) {
+            .clock-container { gap: 5px; }
+            .card-stack { width: 90px; height: 142px; }
+            .card {
+                width: 90px;
+                height: 142px;
+                font-size: 120px;
+                border-radius: 10px;
+                border-width: 2px;
+            }
+            .card-label {
+                font-size: 8px;
+                margin-top: 15px;
+            }
+            .time-label {
+                font-size: 28px;
+                margin: 0 2px;
+            }
+        }
+
+        /* 모바일 세로가 더 좁을 때 */
+        @media (max-width: 480px) {
+            .card-stack { width: 50px; height: 80px; }
+            .card {
+                width: 50px;
+                height: 80px;
+                font-size: 65px;
+                border-radius: 6px;
+                border-width: 1px;
+            }
+            .card-label { display: none; /* 화면이 작으면 영문 텍스트 생략 */ }
+            .time-label { font-size: 18px; margin: 0; }
+        }
+    </style>
+
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://sabum.me/03_Playground/lab_falling_cards.html">
+    <meta property="og:title" content="FALLING CARDS - SABUM Lab">
+    <meta property="og:description" content="FALLING CARDS">
+    <meta property="og:image" content="https://sabum.me/assets/og-lab.png">
+
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="FALLING CARDS - SABUM Lab">
+    <meta name="twitter:description" content="FALLING CARDS">
+    <meta name="twitter:image" content="https://sabum.me/assets/og-lab.png">
+</head>
+<body>
+    <div class="container">
+        <div class="clock-container" id="clockContainer">
+            </div>
+    </div>
+
+    <script>
+        // 이미지에서 추출한 색상 팔레트
+        const COLORS = [
+            '#1034A6', // 파랑
+            '#8B5A2B', // 갈색
+            '#F5A623', // 주황
+            '#E85D9C', // 핑크
+            '#1034A6', // 파랑
+            '#FF5722', // 주황/빨강
+            '#FFFFFF', // 흰색
+            '#1B9E4B'  // 초록
+        ];
+
+        let audioCtx = null;
+        let audioEnabled = false;
+
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+            audioEnabled = true;
+        }
+
+        // 사용자 상호작용으로 오디오 활성화
+        document.addEventListener('click', initAudio, { once: true });
+        document.addEventListener('keydown', initAudio, { once: true });
+        document.addEventListener('touchstart', initAudio, { once: true });
+
+        function playXylophone(frequency, duration = 0.3, volume = 0.3) {
+            if (!audioCtx || !audioEnabled) return;
+
+            const osc = audioCtx.createOscillator();
+            const gainNode = audioCtx.createGain();
+
+            // 실로폰 톤 (사인파 + 하모닉스)
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(frequency, audioCtx.currentTime);
+
+            // 빠른 감쇠 (실로폰 특성)
+            gainNode.gain.setValueAtTime(volume, audioCtx.currentTime);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + duration);
+
+            osc.connect(gainNode);
+            gainNode.connect(audioCtx.destination);
+
+            osc.start();
+            osc.stop(audioCtx.currentTime + duration);
+        }
+
+        const DIGIT_COUNT = 6; // HH:MM:SS
+        const CARDS_PER_STACK = 8; // 각 자리당 8장 카드
+        const ZIGZAG_ANGLE = 2; // 지그재그 각도 (도)
+        const ZIGZAG_OFFSET = 4; // 지그재그 X 오프셋 (px)
+
+        let stacks = []; // 6개 스택
+        let currentDigits = ['0', '0', '0', '0', '0', '0'];
+
+        function getTimeDigits() {
+            const now = new Date();
+            const h = String(now.getHours()).padStart(2, '0');
+            const m = String(now.getMinutes()).padStart(2, '0');
+            const s = String(now.getSeconds()).padStart(2, '0');
+            return [h[0], h[1], m[0], m[1], s[0], s[1]];
+        }
+
+        const NUMBER_WORDS = ['ZERO', 'ONE', 'TWO', 'THREE', 'FOUR', 'FIVE', 'SIX', 'SEVEN', 'EIGHT', 'NINE'];
+
+        function createCardStack(stackIndex, initialDigit) {
+            const stackWrapper = document.createElement('div');
+            stackWrapper.className = 'card-stack';
+
+            const cards = [];
+            // 각 스택마다 랜덤한 색상 오프셋
+            const colorOffset = Math.floor(Math.random() * COLORS.length);
+
+            for (let i = 0; i < CARDS_PER_STACK; i++) {
+                const card = document.createElement('div');
+                card.className = 'card';
+                const colorIndex = (i + colorOffset) % COLORS.length;
+                card.style.backgroundColor = COLORS[colorIndex];
+
+                // 첫 번째 카드만 현재 시간 표시, 나머지는 랜덤
+                const digit = i === CARDS_PER_STACK - 1 ? initialDigit : Math.floor(Math.random() * 10);
+
+                // 숫자 span
+                const numSpan = document.createElement('span');
+                numSpan.className = 'card-number';
+                numSpan.textContent = digit;
+                card.appendChild(numSpan);
+
+                // 영문 라벨
+                const label = document.createElement('span');
+                label.className = 'card-label';
+                label.textContent = NUMBER_WORDS[digit];
+                card.appendChild(label);
+
+                // 흰색 카드는 검정 텍스트
+                if (COLORS[colorIndex] === '#FFFFFF') {
+                    card.style.color = '#000000';
+                } else {
+                    card.style.color = '#FFFFFF';
+                }
+
+                // 지그재그 배치 (랜덤 각도)
+                const angle = (Math.random() - 0.5) * ZIGZAG_ANGLE * 2;
+                const offsetX = (Math.random() - 0.5) * ZIGZAG_OFFSET * 2;
+
+                card.style.zIndex = i + 1;
+                card.style.transform = `translateX(${offsetX}px) rotate(${angle}deg)`;
+                card.dataset.originalTransform = `translateX(${offsetX}px) rotate(${angle}deg)`;
+
+                stackWrapper.appendChild(card);
+                cards.push(card);
+            }
+
+            return { wrapper: stackWrapper, cards };
+        }
+
+        // 라벨 노드 생성 함수
+        function createTimeLabel(text) {
+            const div = document.createElement('div');
+            div.className = 'time-label';
+            div.textContent = text;
+            return div;
+        }
+
+        function dropCard(stackIndex, newDigit) {
+            const stack = stacks[stackIndex];
+            if (!stack) return;
+
+            // 맨 앞 카드 찾기 (가장 높은 z-index)
+            let topCard = null;
+            let topZIndex = -1;
+            let nextCard = null;
+            let nextZIndex = -1;
+
+            stack.cards.forEach(card => {
+                const z = parseInt(card.style.zIndex) || 0;
+                if (z > topZIndex) {
+                    nextCard = topCard;
+                    nextZIndex = topZIndex;
+                    topZIndex = z;
+                    topCard = card;
+                } else if (z > nextZIndex) {
+                    nextCard = card;
+                    nextZIndex = z;
+                }
+            });
+
+            if (!topCard) return;
+
+            // 다음 카드에 새 숫자 표시 (떨어지기 전에!)
+            if (nextCard) {
+                nextCard.querySelector('.card-number').textContent = newDigit;
+                nextCard.querySelector('.card-label').textContent = NUMBER_WORDS[newDigit];
+            }
+
+            // 랜덤 속도 (딜레이 없음)
+            const randomDuration = 0.6 + Math.random() * 0.6; // 0.6s ~ 1.2s
+
+            // 떨어지는 중 표시 (wobble 충돌 방지)
+            topCard.dataset.falling = 'true';
+
+            // 떨어지는 애니메이션
+            topCard.style.transition = `transform ${randomDuration}s cubic-bezier(0.87, 0, 0.13, 1)`;
+            const currentTransform = topCard.dataset.originalTransform;
+            const fallDistance = window.innerHeight + 400;
+
+            topCard.style.transform = `${currentTransform} translateY(${fallDistance}px) rotate(${Math.random() * 70 - 35}deg)`;
+
+            // 애니메이션 완료 후 처리
+            setTimeout(() => {
+                topCard.style.transition = 'none';
+                topCard.style.zIndex = 0;
+                delete topCard.dataset.falling;
+
+                // 모든 카드 z-index 증가
+                stack.cards.forEach(card => {
+                    if (card !== topCard) {
+                        card.style.zIndex = parseInt(card.style.zIndex) + 1;
+                    }
+                });
+
+                // 맨 뒤로 간 카드는 랜덤 숫자
+                const randomNum = Math.floor(Math.random() * 10);
+                topCard.querySelector('.card-number').textContent = randomNum;
+                topCard.querySelector('.card-label').textContent = NUMBER_WORDS[randomNum];
+                topCard.style.transform = topCard.dataset.originalTransform;
+            }, randomDuration * 1000 + 50);
+        }
+
+        function updateClock() {
+            const newDigits = getTimeDigits();
+
+            // 1분이 지날 때마다 (분의 일의 자리 숫자가 변경되었을 때) 효과음 딱 한 번 재생
+            if (newDigits[3] !== currentDigits[3]) {
+                playXylophone(659.25, 0.5, 0.5); // 맑은 톤(E5)으로 소리 재생
+            }
+
+            for (let i = 0; i < DIGIT_COUNT; i++) {
+                if (newDigits[i] !== currentDigits[i]) {
+                    // 숫자가 변경된 경우 카드 떨어뜨리기
+                    dropCard(i, newDigits[i]);
+                    currentDigits[i] = newDigits[i];
+                }
+            }
+        }
+
+        function init() {
+            const container = document.getElementById('clockContainer');
+            container.innerHTML = '';
+            stacks = [];
+            currentDigits = getTimeDigits();
+
+            // 6개 스택 생성 및 시/분/초 라벨 추가
+            for (let i = 0; i < DIGIT_COUNT; i++) {
+                const stack = createCardStack(i, currentDigits[i]);
+                container.appendChild(stack.wrapper);
+                stacks.push(stack);
+
+                // 두 자리마다 라벨(시, 분, 초) 삽입
+                if (i === 1) {
+                    container.appendChild(createTimeLabel('시'));
+                } else if (i === 3) {
+                    container.appendChild(createTimeLabel('분'));
+                } else if (i === 5) {
+                    container.appendChild(createTimeLabel('초'));
+                }
+            }
+
+            // 인트로 애니메이션: 위에서 떨어지는 모션
+            playIntroAnimation();
+
+            // 매초 시간 체크
+            setTimeout(() => {
+                setInterval(updateClock, 1000);
+                // 1초마다 지그재그 미세 움직임
+                setInterval(wobbleCards, 1000);
+            }, 1500); // 인트로 후 시작
+        }
+
+        function wobbleCards() {
+            stacks.forEach(stack => {
+                stack.cards.forEach(card => {
+                    // 떨어지는 중인 카드는 제외
+                    if (card.dataset.falling) return;
+
+                    // 현재 transform에서 약간씩 변화
+                    const newAngle = (Math.random() - 0.5) * ZIGZAG_ANGLE * 2;
+                    const newOffsetX = (Math.random() - 0.5) * ZIGZAG_OFFSET * 2;
+                    const newTransform = `translateX(${newOffsetX}px) rotate(${newAngle}deg)`;
+
+                    card.style.transition = 'transform 0.5s ease-out';
+                    card.style.transform = newTransform;
+                    card.dataset.originalTransform = newTransform;
+                });
+            });
+        }
+
+        function playIntroAnimation() {
+            const startY = -window.innerHeight - 400;
+
+            // 모든 카드를 화면 위로 이동
+            stacks.forEach((stack) => {
+                stack.cards.forEach((card) => {
+                    const originalTransform = card.dataset.originalTransform;
+                    card.style.transform = `${originalTransform} translateY(${startY}px)`;
+                });
+            });
+
+            // 생성된 라벨 요소들 가져오기
+            const labels = document.querySelectorAll('.time-label');
+
+            // 순차적으로 떨어지기 및 라벨 표시
+            setTimeout(() => {
+                stacks.forEach((stack, stackIdx) => {
+                    stack.cards.forEach((card, cardIdx) => {
+                        const delay = stackIdx * 80 + cardIdx * 30;
+                        setTimeout(() => {
+                            card.classList.add('intro');
+                            card.style.transform = card.dataset.originalTransform;
+                            setTimeout(() => card.classList.remove('intro'), 600);
+                        }, delay);
+                    });
+                });
+
+                // 라벨 페이드인 (각 카드가 떨어질 즈음)
+                labels.forEach((label, idx) => {
+                    // idx 0, 1, 2 에 대해 스택 인덱스(1, 3, 5) 기반으로 딜레이 계산
+                    const stackIdx = idx * 2 + 1;
+                    const delay = stackIdx * 80 + (CARDS_PER_STACK - 1) * 30; 
+                    setTimeout(() => {
+                        label.classList.add('visible');
+                    }, delay);
+                });
+            }, 100);
+        }
+
+        init();
+    </script>
+<script async id="netlify-rum-container" src="/.netlify/scripts/rum" data-netlify-rum-site-id="f53085bf-8ff0-4b72-a7e0-a7ae801ef839" data-netlify-deploy-branch="main" data-netlify-deploy-context="production" data-netlify-cwv-token="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzaXRlX2lkIjoiZjUzMDg1YmYtOGZmMC00YjcyLWE3ZTAtYTdhZTgwMWVmODM5IiwiYWNjb3VudF9pZCI6IjY5MjAyMjIyOTdhMTljMGM5MjU5ZGY4NSIsImRlcGxveV9pZCI6IjY5Y2U3Y2ZjYjdlMmYwMDAwNzEwZGFmZSIsImlzc3VlciI6Im5mc2VydmVyIn0.d-77s8e8oxUuPfxK_j9mktPf-I_VHLjefZAu82qFvFY"></script></body>
+</html>

@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <link rel="icon" type="image/png" href="../Assets/favicon.png">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lab: Hand Tracking Prism Particles</title>
+
+    <!-- MediaPipe Libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <!-- Import Map for Three.js and Addons -->
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+
+    <style>
+        body {
+            margin: 0;
+            background-color: #0c0a06;
+            overflow: hidden;
+            font-family: 'Inter', -apple-system, sans-serif;
+        }
+
+        canvas {
+            display: block;
+        }
+
+        /* Webcam Monitor View - moved to bottom-left, rounded square */
+        .input_video {
+            display: none;
+        }
+
+        .output_canvas {
+            position: absolute;
+            bottom: 24px;
+            left: 24px;
+            width: 160px;
+            height: 160px;
+            border-radius: 12px;
+            border: 1px solid rgba(222, 198, 84, 0.28);
+            box-shadow: 0 0 24px rgba(222, 198, 84, 0.10);
+            z-index: 100;
+            object-fit: cover;
+            background: #0c0a06;
+        }
+    </style>
+
+    <!-- Open Graph / Social -->
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://sabum.me/03_Playground/lab_hand_particles.html">
+    <meta property="og:title" content="Hand Tracking Prism Particles - SABUM Lab">
+    <meta property="og:description" content="Interactive visual experiment by SABUM">
+    <meta property="og:image" content="https://sabum.me/assets/og-lab.png">
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Hand Tracking Prism Particles - SABUM Lab">
+    <meta name="twitter:description" content="Interactive visual experiment by SABUM">
+    <meta name="twitter:image" content="https://sabum.me/assets/og-lab.png">
+</head>
+
+<body>
+    <video class="input_video"></video>
+    <canvas class="output_canvas" width="240" height="240"></canvas>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { GPUComputationRenderer } from 'three/addons/misc/GPUComputationRenderer.js';
+
+        /**
+         * Webcam Hand Tracking Interactive Art
+         * ------------------------------------
+         * GPGPU Fluid Particles with MediaPipe
+         * Variant: Warm Gold (#DEC654)
+         */
+
+        // 1. GPGPU Shader Constants & Code
+        const WIDTH = 128;
+        const HEIGHT = 256; // 128x256 = 32,768 particles
+
+        const positionFrag = `
+            precision highp float;
+
+            void main() {
+                vec2 uv = gl_FragCoord.xy / resolution.xy;
+                vec4 pos = texture2D( texturePosition, uv );
+                vec4 vel = texture2D( textureVelocity, uv );
+                pos.xyz += vel.xyz;
+                
+                if (pos.x > 10.0) pos.x = -10.0;
+                if (pos.x < -10.0) pos.x = 10.0;
+                if (pos.y > 10.0) pos.y = -10.0;
+                if (pos.y < -10.0) pos.y = 10.0;
+                if (pos.z > 10.0) pos.z = -10.0;
+                if (pos.z < -10.0) pos.z = 10.0;
+
+                gl_FragColor = pos;
+            }
+        `;
+
+        const velocityFrag = `
+            precision highp float;
+
+            uniform float uTime;
+            uniform vec3 uHandLeft;
+            uniform vec3 uHandRight;
+            uniform float uGripLeft;
+            uniform float uGripRight;
+            uniform float uHandActiveLeft;
+            uniform float uHandActiveRight;
+
+            float rand(vec2 n) { return fract(sin(dot(n, vec2(12.9898, 4.1414))) * 43758.5453); }
+            float noise(vec3 p) {
+                vec3 i = floor(p);
+                vec3 f = fract(p);
+                f = f * f * (3.0 - 2.0 * f);
+                float n = i.x + i.y * 157.0 + 113.0 * i.z;
+                return mix(mix(mix(rand(vec2(n,0.0)), rand(vec2(n+1.0,0.0)), f.x),
+                               mix(rand(vec2(n+157.0,0.0)), rand(vec2(n+158.0,0.0)), f.x), f.y),
+                           mix(mix(rand(vec2(n+113.0,0.0)), rand(vec2(n+114.0,0.0)), f.x),
+                               mix(rand(vec2(n+270.0,0.0)), rand(vec2(n+271.0,0.0)), f.x), f.y), f.z);
+            }
+
+            void main() {
+                vec2 uv = gl_FragCoord.xy / resolution.xy;
+                vec4 pos = texture2D( texturePosition, uv );
+                vec4 vel = texture2D( textureVelocity, uv );
+
+                float id = rand(uv);
+
+                float noiseFreq = 0.25;
+                float noiseStr = mix(0.003, 0.001, clamp(uHandActiveLeft + uHandActiveRight, 0.0, 1.0));
+                float n = noise(pos.xyz * noiseFreq + uTime * 0.1);
+                vel.xyz += vec3(cos(n * 6.28), sin(n * 6.28), sin(n * 13.0)) * noiseStr;
+
+                vec3 targetPos = pos.xyz;
+                float currentGrip = 0.0;
+                float activeFlag = 0.0;
+                
+                bool isTargetLeft = uv.x < 0.5;
+                
+                if (uHandActiveLeft > 0.5 && uHandActiveRight > 0.5) {
+                    targetPos = isTargetLeft ? uHandLeft : uHandRight;
+                    currentGrip = isTargetLeft ? uGripLeft : uGripRight;
+                    activeFlag = 1.0;
+                } else if (uHandActiveLeft > 0.5) {
+                    targetPos = uHandLeft;
+                    currentGrip = uGripLeft;
+                    activeFlag = 1.0;
+                } else if (uHandActiveRight > 0.5) {
+                    targetPos = uHandRight;
+                    currentGrip = uGripRight;
+                    activeFlag = 1.0;
+                }
+
+                if (activeFlag > 0.5) {
+                    vec3 dir = pos.xyz - targetPos;
+                    float dist = length(dir);
+                    
+                    float swarmNoise = noise(pos.xyz * 0.5 + uTime * 0.2 + id * 10.0);
+                    vec3 sandTargetOffset = vec3(
+                        cos(swarmNoise * 6.28 + id * 100.0),
+                        sin(swarmNoise * 6.28 + id * 200.0),
+                        sin(swarmNoise * 3.14 + id * 300.0)
+                    ) * (2.5 + id * 1.5);
+                    
+                    float r = pow(rand(uv * 1.5), 0.33) * 2.34;
+                    float theta = rand(uv * 2.1) * 6.28;
+                    float phi = rand(uv * 3.7) * 3.14;
+                    vec3 sphereTargetOffset = vec3(
+                        r * sin(phi) * cos(theta),
+                        r * sin(phi) * sin(theta),
+                        r * cos(phi)
+                    );
+
+                    vec3 finalOffset = mix(sandTargetOffset, sphereTargetOffset, currentGrip);
+                    vec3 finalTarget = targetPos + finalOffset;
+                    
+                    vec3 steerDir = finalTarget - pos.xyz;
+                    float steerDist = length(steerDir);
+                    float steerStrength = mix(0.0040, 0.0066, currentGrip);
+                    vel.xyz += normalize(steerDir) * clamp(steerDist, 0.0, 5.0) * steerStrength;
+                    
+                    vel.xyz += cross(normalize(dir + 0.01), vec3(0, 1, 0)) * (0.01 * (1.0 - currentGrip));
+                }
+                
+                float friction = mix(0.94, 0.9, activeFlag);
+                vel.xyz *= friction;
+
+                gl_FragColor = vel;
+            }
+        `;
+
+        const renderVertexShader = `
+            precision highp float;
+            uniform sampler2D texturePosition;
+            uniform sampler2D textureVelocity;
+            varying float vVelocity;
+            varying vec3 vWorldPos;
+
+            void main() {
+                vec4 pos = texture2D( texturePosition, uv );
+                vec4 vel = texture2D( textureVelocity, uv );
+                
+                vVelocity = length(vel.xyz);
+                vWorldPos = pos.xyz;
+
+                vec4 mvPosition = modelViewMatrix * vec4( pos.xyz, 1.0 );
+                gl_Position = projectionMatrix * mvPosition;
+                
+                float baseSize = 1.8 + clamp(vVelocity * 4.5, 0.0, 9.0);
+                gl_PointSize = baseSize * (15.0 / length(mvPosition.xyz));
+                gl_PointSize = clamp(gl_PointSize, 1.0, 11.0);
+            }
+        `;
+
+        // --- VARIANT: Warm Gold palette centered on #DEC654 ---
+        const renderFragmentShader = `
+            precision highp float;
+            varying float vVelocity;
+            varying vec3 vWorldPos;
+            uniform float uTime;
+
+            // Warm gold gradient: deep bronze -> amber -> DEC654 gold -> pale cream
+            // #DEC654 = vec3(0.871, 0.776, 0.329)
+            vec3 warmGold(float t) {
+                vec3 c0 = vec3(0.06, 0.05, 0.02);   // deep bronze shadow
+                vec3 c1 = vec3(0.38, 0.29, 0.09);   // dark amber
+                vec3 c2 = vec3(0.871, 0.776, 0.329); // #DEC654 — signature gold
+                vec3 c3 = vec3(1.00, 0.96, 0.80);   // pale cream highlight
+
+                t = clamp(t, 0.0, 1.0);
+                if (t < 0.33) {
+                    return mix(c0, c1, t / 0.33);
+                } else if (t < 0.66) {
+                    return mix(c1, c2, (t - 0.33) / 0.33);
+                } else {
+                    return mix(c2, c3, (t - 0.66) / 0.34);
+                }
+            }
+
+            void main() {
+                float dist = length(gl_PointCoord - 0.5);
+                if (dist > 0.5) discard;
+
+                // depth-driven hue: closer = brighter gold, farther = bronze shadow
+                float depth = clamp((vWorldPos.z + 10.0) / 20.0, 0.0, 1.0);
+                float vibe = fract(uTime * 0.04 + vWorldPos.y * 0.02);
+                // bias toward the DEC654 mid-tone so the signature hue dominates
+                float t = mix(depth, vibe, 0.35);
+                t = mix(t, 0.6, 0.25); // pull toward gold band
+                vec3 color = warmGold(t);
+
+                // velocity adds a warm highlight (cream-ward shift)
+                float highlight = clamp(vVelocity * 1.2, 0.0, 0.35);
+                color += vec3(highlight, highlight * 0.9, highlight * 0.6);
+
+                float edge1 = 0.42 - clamp(vVelocity * 0.08, 0.0, 0.14);
+                float alpha = (1.0 - smoothstep(edge1, 0.5, dist)) * 0.88;
+                gl_FragColor = vec4(color, alpha);
+            }
+        `;
+
+        // 2. Main Logic
+        let scene, camera, renderer, gpuCompute;
+        let posVar, velVar;
+        let particles, fadeMesh;
+        let rings = { Left: null, Right: null };
+        let hands;
+        let cameraFeed;
+        let frame = 0;
+
+        const handState = {
+            Left: { pos: new THREE.Vector3(100, 100, 100), grip: 0, active: 0 },
+            Right: { pos: new THREE.Vector3(100, 100, 100), grip: 0, active: 0 }
+        };
+
+        const videoElement = document.querySelector('.input_video');
+        const canvasElement = document.querySelector('.output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+
+        async function init() {
+            scene = new THREE.Scene();
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 15;
+
+            renderer = new THREE.WebGLRenderer({ antialias: false, preserveDrawingBuffer: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.autoClear = false;
+            document.body.appendChild(renderer.domElement);
+
+            initGPUCompute();
+            initParticles();
+            initRings();
+            initHands();
+            initFadePlane();
+
+            window.addEventListener('resize', onWindowResize);
+            animate();
+        }
+
+        function initRings() {
+            const createRing = () => {
+                const points = [];
+                const numSegments = 64;
+                const r = 2.34;
+                for (let i = 0; i <= numSegments; i++) {
+                    const angle = (i / numSegments) * Math.PI * 2;
+                    points.push(new THREE.Vector3(Math.cos(angle) * r, Math.sin(angle) * r, 0));
+                }
+                const geometry = new THREE.BufferGeometry().setFromPoints(points);
+                const material = new THREE.LineBasicMaterial({
+                    color: 0xDEC654, // signature gold
+                    transparent: true,
+                    opacity: 0,
+                    depthWrite: false
+                });
+                const ring = new THREE.LineLoop(geometry, material);
+                scene.add(ring);
+                return ring;
+            };
+            rings.Left = createRing();
+            rings.Right = createRing();
+        }
+
+        function initFadePlane() {
+            const geometry = new THREE.PlaneGeometry(2, 2);
+            const material = new THREE.MeshBasicMaterial({
+                color: 0x0c0a06,
+                transparent: true,
+                opacity: 0.18, // slightly longer trails than original
+                depthTest: false,
+                depthWrite: false
+            });
+            fadeMesh = new THREE.Mesh(geometry, material);
+            fadeMesh.position.z = -0.5;
+            const fadeScene = new THREE.Scene();
+            fadeScene.add(fadeMesh);
+            window.fadeScene = fadeScene;
+            window.fadeCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+        }
+
+        function initGPUCompute() {
+            gpuCompute = new GPUComputationRenderer(WIDTH, HEIGHT, renderer);
+            const dtPos = gpuCompute.createTexture();
+            const dtVel = gpuCompute.createTexture();
+            const posData = dtPos.image.data;
+            const velData = dtVel.image.data;
+
+            for (let i = 0; i < posData.length; i += 4) {
+                posData[i] = (Math.random() - 0.5) * 20;
+                posData[i + 1] = (Math.random() - 0.5) * 20;
+                posData[i + 2] = (Math.random() - 0.5) * 10;
+                posData[i + 3] = 1;
+                velData[i] = 0;
+                velData[i + 1] = 0;
+                velData[i + 2] = 0;
+                velData[i + 3] = 1;
+            }
+
+            posVar = gpuCompute.addVariable("texturePosition", positionFrag, dtPos);
+            velVar = gpuCompute.addVariable("textureVelocity", velocityFrag, dtVel);
+
+            gpuCompute.setVariableDependencies(posVar, [posVar, velVar]);
+            gpuCompute.setVariableDependencies(velVar, [posVar, velVar]);
+
+            velVar.material.uniforms.uTime = { value: 0 };
+            velVar.material.uniforms.uHandLeft = { value: new THREE.Vector3() };
+            velVar.material.uniforms.uHandRight = { value: new THREE.Vector3() };
+            velVar.material.uniforms.uGripLeft = { value: 0.0 };
+            velVar.material.uniforms.uGripRight = { value: 0.0 };
+            velVar.material.uniforms.uHandActiveLeft = { value: 0.0 };
+            velVar.material.uniforms.uHandActiveRight = { value: 0.0 };
+
+            const error = gpuCompute.init();
+            if (error !== null) console.error(error);
+        }
+
+        function initParticles() {
+            const geo = new THREE.BufferGeometry();
+            const uvs = new Float32Array(WIDTH * HEIGHT * 2);
+            let p = 0;
+            for (let j = 0; j < HEIGHT; j++) {
+                for (let i = 0; i < WIDTH; i++) {
+                    uvs[p++] = i / (WIDTH - 1);
+                    uvs[p++] = j / (HEIGHT - 1);
+                }
+            }
+            geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(WIDTH * HEIGHT * 3), 3));
+            geo.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+
+            const mat = new THREE.ShaderMaterial({
+                uniforms: {
+                    texturePosition: { value: null },
+                    textureVelocity: { value: null },
+                    uTime: { value: 0 }
+                },
+                vertexShader: renderVertexShader,
+                fragmentShader: renderFragmentShader,
+                transparent: true,
+                blending: THREE.NormalBlending,
+                depthWrite: false
+            });
+
+            particles = new THREE.Points(geo, mat);
+            scene.add(particles);
+        }
+
+        function initHands() {
+            hands = new Hands({
+                locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+            });
+
+            hands.setOptions({
+                maxNumHands: 2,
+                modelComplexity: 1,
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5
+            });
+
+            hands.onResults(onResults);
+
+            cameraFeed = new Camera(videoElement, {
+                onFrame: async () => await hands.send({ image: videoElement }),
+                width: 640, height: 480
+            });
+            cameraFeed.start();
+        }
+
+        function onResults(results) {
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.filter = 'grayscale(100%) contrast(1.15) brightness(0.95)';
+            const img = results.image;
+            const minDim = Math.min(img.width, img.height);
+            const sx = (img.width - minDim) / 2;
+            const sy = (img.height - minDim) / 2;
+            canvasCtx.translate(canvasElement.width, 0);
+            canvasCtx.scale(-1, 1);
+            canvasCtx.drawImage(img, sx, sy, minDim, minDim, 0, 0, canvasElement.width, canvasElement.height);
+
+            canvasCtx.filter = 'none';
+
+            handState.Left.active = 0;
+            handState.Right.active = 0;
+            handState.Left.pos.set(100, 100, 100);
+            handState.Right.pos.set(100, 100, 100);
+
+            if (results.multiHandLandmarks) {
+                const connections = [
+                    [0, 1], [1, 2], [2, 3], [3, 4],
+                    [0, 5], [5, 6], [6, 7], [7, 8],
+                    [5, 9], [9, 10], [10, 11], [11, 12],
+                    [9, 13], [13, 14], [14, 15], [15, 16],
+                    [13, 17], [17, 18], [18, 19], [19, 20], [0, 17]
+                ];
+
+                results.multiHandLandmarks.forEach((landmarks, index) => {
+                    const label = results.multiHandedness[index].label;
+                    const hand = handState[label];
+                    hand.active = 1;
+                    const wrist = landmarks[0];
+                    const palm = landmarks[9];
+
+                    hand.pos.set(
+                        (0.5 - palm.x) * 30,
+                        (0.5 - palm.y) * 22,
+                        (0.5 - palm.z) * 10
+                    );
+
+                    const tips = [8, 12, 16, 20];
+                    let totalDist = 0;
+                    tips.forEach(idx => {
+                        const tip = landmarks[idx];
+                        totalDist += Math.sqrt(Math.pow(tip.x - wrist.x, 2) + Math.pow(tip.y - wrist.y, 2));
+                    });
+
+                    const rawGrip = (totalDist - 0.35) / (0.65 - 0.35);
+                    const targetGrip = 1.0 - Math.max(0, Math.min(1, rawGrip));
+                    hand.grip += (targetGrip - hand.grip) * 0.2;
+
+                    // --- VARIANT: DEC654 gold accent for landmarks ---
+                    const activeColor = '#DEC654';
+
+                    canvasCtx.strokeStyle = activeColor;
+                    canvasCtx.lineWidth = 1.25;
+                    canvasCtx.beginPath();
+                    connections.forEach(([startIdx, endIdx]) => {
+                        const start = landmarks[startIdx];
+                        const end = landmarks[endIdx];
+                        canvasCtx.moveTo(start.x * canvasElement.width, start.y * canvasElement.height);
+                        canvasCtx.lineTo(end.x * canvasElement.width, end.y * canvasElement.height);
+                    });
+                    canvasCtx.stroke();
+
+                    canvasCtx.fillStyle = activeColor;
+                    landmarks.forEach(lm => {
+                        const mx = lm.x * canvasElement.width;
+                        const my = lm.y * canvasElement.height;
+                        canvasCtx.beginPath();
+                        canvasCtx.arc(mx, my, 1.8, 0, 2 * Math.PI);
+                        canvasCtx.fill();
+                    });
+
+                    canvasCtx.fillStyle = '#FFFFFF';
+                    const monitorX = palm.x * canvasElement.width;
+                    const monitorY = palm.y * canvasElement.height;
+                    canvasCtx.beginPath();
+                    canvasCtx.arc(monitorX, monitorY, 3.5, 0, 2 * Math.PI);
+                    canvasCtx.fill();
+                });
+            }
+            canvasCtx.restore();
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            frame++;
+
+            velVar.material.uniforms.uTime.value = frame * 0.01;
+            velVar.material.uniforms.uHandLeft.value.copy(handState.Left.pos);
+            velVar.material.uniforms.uHandRight.value.copy(handState.Right.pos);
+            velVar.material.uniforms.uGripLeft.value = handState.Left.grip;
+            velVar.material.uniforms.uGripRight.value = handState.Right.grip;
+            velVar.material.uniforms.uHandActiveLeft.value = handState.Left.active;
+            velVar.material.uniforms.uHandActiveRight.value = handState.Right.active;
+            gpuCompute.compute();
+
+            ["Left", "Right"].forEach(side => {
+                const ring = rings[side];
+                const hand = handState[side];
+                if (hand && hand.active) {
+                    ring.position.lerp(hand.pos, 0.12);
+                    ring.lookAt(camera.position);
+                    ring.material.opacity += (hand.grip * 0.7 - ring.material.opacity) * 0.15;
+                } else if (ring) {
+                    ring.material.opacity *= 0.85;
+                }
+            });
+
+            if (window.fadeScene && window.fadeCamera) {
+                renderer.render(window.fadeScene, window.fadeCamera);
+            }
+
+            particles.material.uniforms.texturePosition.value = gpuCompute.getCurrentRenderTarget(posVar).texture;
+            particles.material.uniforms.textureVelocity.value = gpuCompute.getCurrentRenderTarget(velVar).texture;
+            particles.material.uniforms.uTime.value = frame * 0.01;
+            renderer.render(scene, camera);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        init();
+    </script>
+</body>
+</html>
