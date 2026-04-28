@@ -3,6 +3,7 @@ import mediapipe as mp
 import numpy as np
 import math
 import random
+import time # 시간을 재기 위해 필요해요!
 
 # --- [설정 및 색상] ---
 SKELETON_COLOR = (255, 253, 0)
@@ -12,8 +13,9 @@ SPARK_CORE_COLOR = (255, 255, 255)
 SPARK_GLOW_COLOR = (0, 165, 255)
 
 CLEAR_BTN = (20, 20, 150, 80) 
-TOO_CLOSE_THRESHOLD = 300  # 이전보다 상향 조정된 임계값
-guide_visible = True       # 매뉴얼 표시 여부 변수 복구
+TOO_CLOSE_THRESHOLD = 300 
+guide_visible = True       
+guide_start_time = None # 매뉴얼이 나타난 시간을 저장할 변수
 
 mp_hands = mp.solutions.hands
 mp_drawing = mp.solutions.drawing_utils
@@ -45,7 +47,7 @@ class PinchSpark:
         cv2.circle(canvas, (int(self.x), int(self.y)), int(self.size * alpha * 4) + 1, SPARK_GLOW_COLOR, -1)
 
 def draw_guide_overlay(img):
-    """중앙 안내창 UI (매뉴얼 복구)"""
+    """중앙 안내창 UI (기존 UI 스타일 유지)"""
     h, w, _ = img.shape
     box_w, box_h = 950, 550
     x1, y1 = (w - box_w) // 2, (h - box_h) // 2
@@ -73,7 +75,6 @@ def draw_guide_overlay(img):
                     cv2.FONT_HERSHEY_SIMPLEX, font_scale, color, thickness)
 
 def draw_distance_warning(img):
-    """상단 경고 바 UI"""
     h, w, _ = img.shape
     overlay = img.copy()
     cv2.rectangle(overlay, (0, 0), (w, 100), (0, 0, 180), -1)
@@ -107,7 +108,8 @@ while cap.isOpened():
     too_close = False
 
     if results.multi_hand_landmarks:
-        guide_visible = False # 손이 보이면 매뉴얼 숨김
+        guide_visible = False 
+        guide_start_time = None # 손이 보이면 타이머 리셋
         for hand_landmarks in results.multi_hand_landmarks:
             wrist = hand_landmarks.landmark[0]
             index_mcp_ref = hand_landmarks.landmark[5]
@@ -156,7 +158,15 @@ while cap.isOpened():
                 else:
                     if current_shape: shapes.append(current_shape); current_shape = []
     else:
-        guide_visible = True # 손이 안 보이면 다시 매뉴얼 표시
+        # 손이 화면에서 사라졌을 때
+        if not guide_visible:
+            guide_visible = True
+            guide_start_time = time.time() # 사라진 시점 기록
+        
+        # 5초가 경과했는지 체크
+        if guide_start_time is not None:
+            if time.time() - guide_start_time > 5.0:
+                shapes, current_shape, all_sparks = [], [], [] # 초기화!
 
     # --- 렌더링 ---
     cv2.rectangle(display_frame, (CLEAR_BTN[0], CLEAR_BTN[1]), (CLEAR_BTN[2], CLEAR_BTN[3]), (50, 50, 50), -1)
