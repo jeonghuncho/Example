@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Real Spark Neon Drawing</title>
+<style>
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: #000;
+    overflow: hidden;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
+    color: #fff;
+  }
+  #wrapper {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  /* 카메라 입력은 화면에 직접 표시하지 않고 캔버스에서만 사용 */
+  #video {
+    display: none;
+  }
+  #canvas {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    background: #000;
+  }
+  #loading {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: #fff;
+    font-size: 22px;
+    text-align: center;
+    letter-spacing: 2px;
+  }
+  #loading .dot {
+    display: inline-block;
+    animation: blink 1.4s infinite;
+  }
+  #loading .dot:nth-child(2) { animation-delay: 0.2s; }
+  #loading .dot:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes blink {
+    0%, 80%, 100% { opacity: 0.2; }
+    40% { opacity: 1; }
+  }
+</style>
+</head>
+<body>
+<div id="wrapper">
+  <video id="video" autoplay playsinline></video>
+  <canvas id="canvas" width="1280" height="720"></canvas>
+  <div id="loading">
+    LOADING<span class="dot">.</span><span class="dot">.</span><span class="dot">.</span>
+  </div>
+</div>
+
+<!-- MediaPipe Hands (JS) -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
+<script>
+/* =========================================================
+   Real Spark Neon Drawing — Web port of the Python script
+   ========================================================= */
+
+// ---------- 설정 / 색상 ----------
+const SKELETON_COLOR   = 'rgb(0, 253, 255)';      // BGR(255,253,0) -> 시안
+const DRAW_GLOW_COLOR  = 'rgb(255, 0, 0)';        // BGR(0,0,255)   -> 빨강
+const GRAB_GLOW_COLOR  = 'rgb(255, 255, 0)';      // BGR(0,255,255) -> 노랑
+const SPARK_CORE_COLOR = 'rgb(255, 255, 255)';
+const SPARK_GLOW_COLOR = 'rgb(255, 165, 0)';      // BGR(0,165,255) -> 주황
+
+const CLEAR_BTN = { x1: 20, y1: 20, x2: 150, y2: 80 };
+const TOO_CLOSE_THRESHOLD = 300;
+
+// ---------- 캔버스 / 비디오 ----------
+const video    = document.getElementById('video');
+const canvas   = document.getElementById('canvas');
+const ctx      = canvas.getContext('2d');
+const loading  = document.getElementById('loading');
+
+const W = canvas.width;
+const H = canvas.height;
+
+// 보조 캔버스 (글로우 / 코어 / 스파크 합성용)
+function makeCanvas() {
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  return c;
+}
+const glowCanvas      = makeCanvas();
+const coreCanvas      = makeCanvas();
+const sparkGlowCanvas = makeCanvas();
+const sparkCoreCanvas = makeCanvas();
+
+// ---------- 상태 ----------
+let allSparks       = [];
+let shapes          = [];
+let currentShape    = [];
+let selectedShapeIdx = null;
+let prevPinchPos    = null;
+
+let guideVisible    = true;
+let guideStartTime  = null;
+let tooClose        = false;
+
+// ---------- 유틸 ----------
+function dist(p1, p2) {
+  return Math.hypot(p1[0] - p2[0], p1[1] - p2[1]);
+}
+
+function clearCanvas(c) {
+  const cx = c.getContext('2d');
+  cx.clearRect(0, 0, c.width, c.height);
+}
+
+// ---------- 스파크 ----------
+class PinchSpark {
+  constructor(x, y) {
+    this.x = x; this.y = y;
+    const angle = Math.random() * 2 * Math.PI;
+    const speed = 3 + Math.random() * 5;
+    this.vx = Math.cos(angle) * speed;
+    this.vy = Math.sin(angle) * speed;
+    this.life    = 10 + Math.floor(Math.random() * 13);
+    this.maxLife = 22;
+    this.size    = 1.2 + Math.random() * 1.6;
+  }
+  update() {
+    this.x += this.vx;
+    this.y += this.vy;
+    this.life -= 1;
+    this.vy += 0.3;
+  }
+  drawCore(cx) {
+    if (this.life <= 0) return;
+    const alpha = this.life / this.maxLife;
+    cx.fillStyle = SPARK_CORE_COLOR;
+    cx.beginPath();
+    cx.arc(this.x, this.y, this.size * alpha + 1, 0, Math.PI * 2);
+    cx.fill();
+  }
+  drawGlow(cx) {
+    if (this.life <= 0) return;
+    const alpha = (this.life / this.maxLife) * 0.7;
+    cx.fillStyle = SPARK_GLOW_COLOR;
+    cx.beginPath();
+    cx.arc(this.x, this.y, this.size * alpha * 4 + 1, 0, Math.PI * 2);
+    cx.fill();
+  }
+}
+
+// ---------- UI: 가이드 / 경고 ----------
+function drawGuideOverlay(cx) {
+  const boxW = 950, boxH = 550;
+  const x1 = (W - boxW) / 2, y1 = (H - boxH) / 2;
+
+  cx.save();
+  cx.globalAlpha = 0.9;
+  cx.fillStyle = 'rgb(15,15,15)';
+  cx.fillRect(x1, y1, boxW, boxH);
+  cx.globalAlpha = 1.0;
+  cx.strokeStyle = '#fff';
+  cx.lineWidth = 4;
+  cx.strokeRect(x1, y1, boxW, boxH);
+
+  const lines = [
+    "--- HOW TO PLAY ---",
+    "1. Index Finger: DRAW",
+    "2. PINCH to move your art",
+    "3. Open your PALM: STOP drawing",
+    "4. Touch 'CLEAR': RESET",
+    "",
+    "SHOW YOUR HANDS TO START!"
+  ];
+
+  cx.font = 'bold 36px Helvetica, Arial, sans-serif';
+  cx.textAlign = 'center';
+  cx.textBaseline = 'middle';
+
+  for (let i = 0; i < lines.length; i++) {
+    cx.fillStyle = (i === 6) ? 'rgb(255,255,0)' : '#fff';
+    cx.fillText(lines[i], x1 + boxW / 2, y1 + 80 + i * 65);
+  }
+  cx.restore();
+}
+
+function drawDistanceWarning(cx) {
+  cx.save();
+  cx.globalAlpha = 0.7;
+  cx.fillStyle = 'rgb(180,0,0)';
+  cx.fillRect(0, 0, W, 100);
+  cx.globalAlpha = 1.0;
+  cx.fillStyle = '#fff';
+  cx.font = 'bold 48px Helvetica, Arial, sans-serif';
+  cx.textAlign = 'center';
+  cx.textBaseline = 'middle';
+  cx.fillText('!!! TOO CLOSE !!!', W / 2, 50);
+  cx.restore();
+}
+
+// ---------- MediaPipe Hands ----------
+const HAND_CONNECTIONS = [
+  [0,1],[1,2],[2,3],[3,4],
+  [0,5],[5,6],[6,7],[7,8],
+  [5,9],[9,10],[10,11],[11,12],
+  [9,13],[13,14],[14,15],[15,16],
+  [13,17],[17,18],[18,19],[19,20],
+  [0,17]
+];
+
+function drawHandSkeleton(cx, landmarks) {
+  cx.strokeStyle = SKELETON_COLOR;
+  cx.fillStyle   = SKELETON_COLOR;
+  cx.lineWidth   = 2;
+
+  // connections
+  for (const [a, b] of HAND_CONNECTIONS) {
+    const p1 = landmarks[a], p2 = landmarks[b];
+    cx.beginPath();
+    cx.moveTo(p1.x * W, p1.y * H);
+    cx.lineTo(p2.x * W, p2.y * H);
+    cx.stroke();
+  }
+  // landmarks
+  for (const lm of landmarks) {
+    cx.beginPath();
+    cx.arc(lm.x * W, lm.y * H, 3, 0, Math.PI * 2);
+    cx.fill();
+  }
+}
+
+// ---------- 메인 처리 (한 프레임) ----------
+function processResults(results) {
+  // 보조 캔버스 초기화
+  clearCanvas(glowCanvas);
+  clearCanvas(coreCanvas);
+  clearCanvas(sparkGlowCanvas);
+  clearCanvas(sparkCoreCanvas);
+
+  // 출력 캔버스: 검정 배경 (파이썬 코드의 display_frame = zeros_like와 동일)
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, 0, W, H);
+
+  tooClose = false;
+  const hasHands = results.multiHandLandmarks && results.multiHandLandmarks.length > 0;
+
+  if (hasHands) {
+    guideVisible = false;
+    guideStartTime = null;
+
+    for (const landmarks of results.multiHandLandmarks) {
+      const wrist        = landmarks[0];
+      const indexMcpRef  = landmarks[5];
+      const handSize = dist(
+        [wrist.x * W, wrist.y * H],
+        [indexMcpRef.x * W, indexMcpRef.y * H]
+      );
+
+      if (handSize > TOO_CLOSE_THRESHOLD) {
+        tooClose = true;
+        continue;
+      }
+
+      drawHandSkeleton(ctx, landmarks);
+
+      const thumbTip = landmarks[4];
+      const indexTip = landmarks[8];
+      const indexMcp = landmarks[6];
+      const middleMcp = landmarks[10];
+      const ringMcp  = landmarks[14];
+      const pinkyMcp = landmarks[18];
+
+      const tx = thumbTip.x * W, ty = thumbTip.y * H;
+      const ix = indexTip.x * W, iy = indexTip.y * H;
+
+      // CLEAR 버튼
+      if (ix >= CLEAR_BTN.x1 && ix <= CLEAR_BTN.x2 &&
+          iy >= CLEAR_BTN.y1 && iy <= CLEAR_BTN.y2) {
+        shapes = [];
+        currentShape = [];
+        allSparks = [];
+      }
+
+      const d = dist([tx, ty], [ix, iy]);
+
+      if (d < 45) {
+        // PINCH (이동 모드)
+        if (currentShape.length > 0) {
+          shapes.push(currentShape);
+          currentShape = [];
+        }
+        if (selectedShapeIdx === null) {
+          for (let i = 0; i < shapes.length; i++) {
+            const s = shapes[i];
+            let hit = false;
+            for (const p of s) {
+              if (dist([ix, iy], p) < 50) { hit = true; break; }
+            }
+            if (hit) { selectedShapeIdx = i; break; }
+          }
+        }
+        if (selectedShapeIdx !== null && prevPinchPos) {
+          const dx = ix - prevPinchPos[0];
+          const dy = iy - prevPinchPos[1];
+          shapes[selectedShapeIdx] = shapes[selectedShapeIdx].map(
+            p => [p[0] + dx, p[1] + dy]
+          );
+        }
+        prevPinchPos = [ix, iy];
+      } else {
+        selectedShapeIdx = null;
+        prevPinchPos = null;
+
+        const indexUp = iy < indexMcp.y * H;
+        const othersDown =
+          (landmarks[12].y > middleMcp.y) &&
+          (landmarks[16].y > ringMcp.y) &&
+          (landmarks[20].y > pinkyMcp.y);
+
+        if (indexUp && othersDown) {
+          currentShape.push([ix, iy]);
+          if (currentShape.length % 3 === 0) {
+            for (let k = 0; k < 5; k++) {
+              allSparks.push(new PinchSpark(ix, iy));
+            }
+          }
+        } else {
+          if (currentShape.length > 0) {
+            shapes.push(currentShape);
+            currentShape = [];
+          }
+        }
+      }
+    }
+  } else {
+    // 손 사라짐
+    if (!guideVisible) {
+      guideVisible = true;
+      guideStartTime = performance.now() / 1000;
+    }
+    if (guideStartTime !== null) {
+      if (performance.now() / 1000 - guideStartTime > 5.0) {
+        shapes = [];
+        currentShape = [];
+        allSparks = [];
+      }
+    }
+  }
+
+  // ---------- 렌더링 ----------
+
+  // CLEAR 버튼
+  ctx.fillStyle = 'rgb(50,50,50)';
+  ctx.fillRect(CLEAR_BTN.x1, CLEAR_BTN.y1,
+               CLEAR_BTN.x2 - CLEAR_BTN.x1,
+               CLEAR_BTN.y2 - CLEAR_BTN.y1);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 28px Helvetica, Arial, sans-serif';
+  ctx.textAlign = 'left';
+  ctx.textBaseline = 'alphabetic';
+  ctx.fillText('CLEAR', CLEAR_BTN.x1 + 18, CLEAR_BTN.y1 + 42);
+
+  // 도형 그리기 (글로우 + 코어)
+  const gctx = glowCanvas.getContext('2d');
+  const cctx = coreCanvas.getContext('2d');
+  gctx.lineCap = 'round'; gctx.lineJoin = 'round';
+  cctx.lineCap = 'round'; cctx.lineJoin = 'round';
+
+  for (let i = 0; i < shapes.length; i++) {
+    const shape = shapes[i];
+    const color = (i === selectedShapeIdx) ? GRAB_GLOW_COLOR : DRAW_GLOW_COLOR;
+    if (shape.length < 2) continue;
+    gctx.strokeStyle = color; gctx.lineWidth = 12;
+    cctx.strokeStyle = '#fff'; cctx.lineWidth = 4;
+    gctx.beginPath(); cctx.beginPath();
+    gctx.moveTo(shape[0][0], shape[0][1]);
+    cctx.moveTo(shape[0][0], shape[0][1]);
+    for (let j = 1; j < shape.length; j++) {
+      gctx.lineTo(shape[j][0], shape[j][1]);
+      cctx.lineTo(shape[j][0], shape[j][1]);
+    }
+    gctx.stroke(); cctx.stroke();
+  }
+  if (currentShape.length >= 2) {
+    gctx.strokeStyle = DRAW_GLOW_COLOR; gctx.lineWidth = 12;
+    cctx.strokeStyle = '#fff';          cctx.lineWidth = 4;
+    gctx.beginPath(); cctx.beginPath();
+    gctx.moveTo(currentShape[0][0], currentShape[0][1]);
+    cctx.moveTo(currentShape[0][0], currentShape[0][1]);
+    for (let j = 1; j < currentShape.length; j++) {
+      gctx.lineTo(currentShape[j][0], currentShape[j][1]);
+      cctx.lineTo(currentShape[j][0], currentShape[j][1]);
+    }
+    gctx.stroke(); cctx.stroke();
+  }
+
+  // 스파크 업데이트 / 그리기
+  allSparks = allSparks.filter(s => s.life > 0);
+  const sgctx = sparkGlowCanvas.getContext('2d');
+  const scctx = sparkCoreCanvas.getContext('2d');
+  for (const s of allSparks) {
+    s.update();
+    s.drawGlow(sgctx);
+    s.drawCore(scctx);
+  }
+
+  // 합성 (파이썬의 cv2.addWeighted + GaussianBlur 와 유사하게)
+  // 1) 스파크 글로우 (블러)
+  ctx.save();
+  ctx.globalCompositeOperation = 'lighter';
+  ctx.filter = 'blur(8px)';
+  ctx.drawImage(sparkGlowCanvas, 0, 0);
+  ctx.drawImage(sparkGlowCanvas, 0, 0); // 이중 합성으로 강도 ↑
+  ctx.filter = 'none';
+
+  // 2) 라인 글로우 (강한 블러)
+  ctx.filter = 'blur(14px)';
+  ctx.drawImage(glowCanvas, 0, 0);
+  ctx.drawImage(glowCanvas, 0, 0);
+  ctx.filter = 'none';
+
+  // 3) 스파크 코어
+  ctx.drawImage(sparkCoreCanvas, 0, 0);
+
+  // 4) 라인 코어
+  ctx.drawImage(coreCanvas, 0, 0);
+  ctx.restore();
+
+  // 가이드 / 경고
+  if (guideVisible) {
+    drawGuideOverlay(ctx);
+  } else if (tooClose) {
+    drawDistanceWarning(ctx);
+  }
+}
+
+// ---------- MediaPipe 초기화 ----------
+const hands = new Hands({
+  locateFile: (file) =>
+    `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+});
+hands.setOptions({
+  maxNumHands: 2,
+  modelComplexity: 1,
+  minDetectionConfidence: 0.7,
+  minTrackingConfidence: 0.8
+});
+hands.onResults((results) => {
+  if (loading.style.display !== 'none') loading.style.display = 'none';
+  processResults(results);
+});
+
+// ---------- 카메라 ----------
+async function startCamera() {
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: 1280, height: 720, facingMode: 'user' },
+      audio: false
+    });
+    video.srcObject = stream;
+    await new Promise(res => video.onloadedmetadata = res);
+    await video.play();
+
+    // 좌우 반전된 입력을 MediaPipe에 보내기 위해
+    // 매 프레임 임시 캔버스에 flip해서 전달한다.
+    const flipCanvas = document.createElement('canvas');
+    flipCanvas.width = W; flipCanvas.height = H;
+    const fctx = flipCanvas.getContext('2d');
+
+    async function loop() {
+      fctx.save();
+      fctx.translate(W, 0);
+      fctx.scale(-1, 1);
+      fctx.drawImage(video, 0, 0, W, H);
+      fctx.restore();
+      await hands.send({ image: flipCanvas });
+      requestAnimationFrame(loop);
+    }
+    loop();
+  } catch (err) {
+    loading.innerHTML =
+      'Camera access failed.<br>Please allow camera permission and reload.';
+    console.error(err);
+  }
+}
+
+startCamera();
+</script>
+</body>
+</html>
