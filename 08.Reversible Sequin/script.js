@@ -22,11 +22,11 @@
     [218, 226, 150],
     [154, 222, 196],
   ];
-  const TARGET_FRAME_MS = 38;
-  const MAX_DPR = 1.35;
+  const TARGET_FRAME_MS = 45;
+  const MAX_DPR = 1.15;
   const GRID_LIMIT = {
-    live: { cols: 128, rows: 76, minCell: 10.8 },
-    idle: { cols: 118, rows: 70, minCell: 11.4 },
+    live: { cols: 104, rows: 62, minCell: 13.2 },
+    idle: { cols: 96, rows: 58, minCell: 13.8 },
   };
 
   const flowers = [
@@ -470,8 +470,8 @@
       }
     }
 
-    if (state.sparks.length > 95) {
-      state.sparks.splice(0, state.sparks.length - 95);
+    if (state.sparks.length > 56) {
+      state.sparks.splice(0, state.sparks.length - 56);
     }
   }
 
@@ -621,8 +621,8 @@
       });
     }
 
-    if (state.splashes.length > 180) {
-      state.splashes.splice(0, state.splashes.length - 180);
+    if (state.splashes.length > 96) {
+      state.splashes.splice(0, state.splashes.length - 96);
     }
   }
 
@@ -962,9 +962,9 @@
         audio: false,
         video: {
           facingMode: "user",
-          width: { ideal: 960 },
-          height: { ideal: 540 },
-          frameRate: { ideal: 24, max: 30 },
+          width: { ideal: 720 },
+          height: { ideal: 405 },
+          frameRate: { ideal: 20, max: 24 },
         },
       });
 
