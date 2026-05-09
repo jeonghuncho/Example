@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Reversible Sequin ASCII Garden</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="script.js" defer></script>
+  </head>
+  <body>
+    <main class="garden-app" aria-label="실시간 웹캠 리버시블 스팽글 ASCII 정원">
+      <video id="cameraFeed" class="camera-feed" autoplay muted playsinline></video>
+
+      <section class="garden-frame" aria-label="웹캠 사용자를 리버시블 스팽글 ASCII 정원으로 변환한 화면">
+        <canvas id="gardenCanvas"></canvas>
+
+        <div class="camera-gate" id="cameraGate" role="status" aria-live="polite">
+          <p id="gateCopy">카메라 권한을 허용하면 현재 웹캠 모습으로 시작됩니다.</p>
+          <button class="camera-button" id="startCamera" type="button">카메라 시작</button>
+        </div>
+      </section>
+    </main>
+  </body>
+</html>
