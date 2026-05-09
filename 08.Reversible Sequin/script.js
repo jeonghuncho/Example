@@ -13,15 +13,7 @@
   const grassGlyphs = ["/", "/", "\\", "|", "!", "l", "I", "v", "A"];
   const sparkGlyphs = ["-", "+", "·", ":", "o", "|", "_", "L"];
   const waterGlyphs = ["o", "O", "0", "·"];
-  const sparkColors = ["#e7e9df", "#d95b45", "#77bde8", "#cf5a87", "#d8dfa0"];
-  const sequinBackColors = [
-    [234, 238, 220],
-    [124, 193, 236],
-    [224, 94, 70],
-    [212, 93, 140],
-    [218, 226, 150],
-    [154, 222, 196],
-  ];
+  const sparkColors = ["#f1f1ec", "#d5d7cf", "#b8bbb3", "#92978f"];
   const TARGET_FRAME_MS = 45;
   const MAX_DPR = 1.15;
   const GRID_LIMIT = {
@@ -205,17 +197,9 @@
     const ry = Math.max(2, radius * 0.84);
     const rotation = (seed - 0.5) * 0.54 + Math.sin(time * 0.0014 + seed * 6.28) * 0.08;
     const shine = 0.5 + Math.sin(time * 0.006 + seed * 13.7 + cx * 0.013 + cy * 0.009) * 0.5;
-    const palette = sequinBackColors[Math.floor(seed * sequinBackColors.length) % sequinBackColors.length];
-    const frontR = lerp(24, 118, luma) + shine * 8;
-    const frontG = lerp(29, 132, luma) + shine * 10;
-    const frontB = lerp(28, 96, luma) + shine * 8;
-    const backLift = 14 + luma * 34 + motion * 0.18 + shine * 18;
-    const backR = clamp(palette[0] + backLift, 0, 255);
-    const backG = clamp(palette[1] + backLift, 0, 255);
-    const backB = clamp(palette[2] + backLift, 0, 255);
-    const r = side ? backR : frontR;
-    const g = side ? backG : frontG;
-    const b = side ? backB : frontB;
+    const frontShade = clamp(lerp(24, 132, luma) + shine * 9, 0, 255);
+    const backShade = clamp(lerp(168, 238, luma) + motion * 0.14 + shine * 12, 0, 255);
+    const shade = side ? backShade : frontShade;
     const shadowAlpha = side ? 0.22 : 0.3;
     const highlightAlpha = clamp((side ? 0.28 : 0.14) + shine * 0.18 + motion / 820, 0.1, 0.58);
 
@@ -224,7 +208,7 @@
     ctx.ellipse(cx + cellW * 0.08, cy + cellH * 0.1, rx, ry, rotation, 0, Math.PI * 2);
     ctx.fill();
 
-    ctx.fillStyle = `rgba(${Math.floor(r)}, ${Math.floor(g)}, ${Math.floor(b)}, ${0.78 + flatness * 0.2})`;
+    ctx.fillStyle = `rgba(${Math.floor(shade)}, ${Math.floor(shade)}, ${Math.floor(shade)}, ${0.78 + flatness * 0.2})`;
     ctx.beginPath();
     ctx.ellipse(cx, cy, rx, ry, rotation, 0, Math.PI * 2);
     ctx.fill();
