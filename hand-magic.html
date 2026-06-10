@@ -1,0 +1,860 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Hand Shower — 줄을 당기면 물이 쏟아져요</title>
+<style>
+  html, body {
+    margin: 0; padding: 0;
+    width: 100%; height: 100%;
+    background: #000;
+    overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", sans-serif;
+  }
+  #stage {
+    position: relative;
+    width: 100vw; height: 100vh;
+  }
+  /* 셀카처럼 좌우 반전된 웹캠 화면 */
+  #video {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
+    transform: scaleX(-1);
+  }
+  #canvas {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+  }
+  #status {
+    position: absolute;
+    top: 32px; left: 50%;
+    transform: translateX(-50%);
+    padding: 18px 38px;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.5);
+    color: #fff;
+    font-size: 26px;
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    backdrop-filter: blur(8px);
+    white-space: nowrap;
+    transition: opacity 0.4s;
+  }
+</style>
+</head>
+<body>
+<div id="stage">
+  <video id="video" autoplay playsinline muted></video>
+  <canvas id="canvas"></canvas>
+  <div id="status">모델 불러오는 중…</div>
+</div>
+
+<script type="module">
+import { HandLandmarker, PoseLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+
+const video  = document.getElementById("video");
+const canvas = document.getElementById("canvas");
+const ctx    = canvas.getContext("2d");
+const status = document.getElementById("status");
+
+// 손가락 끝 랜드마크 인덱스 (엄지~새끼)
+const FINGERTIPS = [4, 8, 12, 16, 20];
+
+const W = () => canvas.width;
+const H = () => canvas.height;
+const S = () => H() / 1152; // 영상(1152p) 기준 측정값 → 화면 스케일
+
+// ── 좌표 변환: 비디오 정규좌표 ↔ 캔버스(미러 + object-fit: cover 보정) ──
+function coverMap() {
+  const scale = Math.max(W() / video.videoWidth, H() / video.videoHeight);
+  return {
+    scale,
+    offX: (W() - video.videoWidth * scale) / 2,
+    offY: (H() - video.videoHeight * scale) / 2,
+  };
+}
+function toCanvas(p, m) {
+  return {
+    x: W() - (m.offX + p.x * video.videoWidth * m.scale),
+    y: m.offY + p.y * video.videoHeight * m.scale,
+  };
+}
+
+// ── 안내 문구 상태 ───────────────────────────────────────
+const PROMPT_TEXT = "✊ 주먹으로 손잡이를 잡고 아래로 당겨보세요!";
+let ready = false;            // 모델·카메라 준비 완료
+let lastInteractAt = 0;       // 마지막으로 레버를 잡거나 물이 나온 시각
+const IDLE_PROMPT_MS = 5000;  // 레버를 이 시간 이상 당기지 않으면 안내 재표시
+
+// ── 당기는 줄(스위치) ────────────────────────────────────
+// 손잡이는 줄 축 위에서 세로로만 움직인다. 주먹으로 잡아
+// 아래로 당긴 뒤 놓으면 ON → 물이 쏟아진다.
+const cord = {
+  anchorX: 0.86,    // 줄의 가로 위치 (화면 비율)
+  restY: 0.317,     // 손잡이가 쉬는 세로 위치 (화면 비율)
+  y: 0,             // 손잡이 현재 위치 (px)
+  grabbedBy: null,
+  on: false,
+  onAt: 0,          // 물이 실제로 나오기 시작하는 시각 (놓고 ~0.13초 뒤)
+  onUntil: 0,
+  onLabelAlpha: 0,
+  fullPulled: false, // 이번에 잡은 동안 끝까지 당겨 효과를 냈는지
+  pink: 0,           // 0=흰색 … 1=핑크 (끝까지 당기면 핑크로 전환)
+  pinkTarget: 0,
+};
+const MAX_TRAVEL = 0.19;      // 손잡이 최대 당김 거리 (화면 높이 비율)
+const SHOWER_DURATION = 5400;
+
+const cordX = () => cord.anchorX * W();
+const cordRestY = () => cord.restY * H();
+
+function triggerShower(now) {
+  cord.on = true;
+  cord.onAt = now + 130;
+  cord.onUntil = cord.onAt + SHOWER_DURATION;
+}
+
+// ── 끝까지 당긴 순간의 효과 (빛 링 + 방사 스파클) ─────────
+const pulses = []; // 확장하는 빛 고리
+const sparks = []; // 손잡이에서 방사되는 반짝이
+const streaks = []; // 줄을 타고 위로 솟는 빛
+const flashes = []; // 손잡이에서 터지는 큰 글로우
+
+// 손잡이를 최대로 당긴 순간 호출 (잡은 동안 한 번)
+function onFullPull() {
+  const s = S();
+  const cx = cordX();
+  const cy = cord.y + 19 * s; // 알약 손잡이 중심
+  cord.pinkTarget = 1;        // 레버를 핑크색으로 "삭" 전환
+  const EFFECT_SPRITES = [spritePink, spritePink, spriteMagenta, sprite]; // 핑크 위주
+
+  // 큰 글로우 플래시 (핑크 + 흰 코어)
+  flashes.push({ x: cx, y: cy, life: 0, max: 0.5, r: 130 * s });
+
+  // 확장하는 빛 고리 5개 (핑크/마젠타/흰 번갈아)
+  const ringSprites = ["255,255,255", "255,120,200", "255,90,170", "255,150,210", "255,110,235"];
+  for (let i = 0; i < 5; i++) {
+    pulses.push({ x: cx, y: cy, delay: i * 0.07, life: 0, max: 0.8,
+      r0: 26 * s, r1: (150 + i * 55) * s, rgb: ringSprites[i] });
+  }
+
+  // 방사 스파클 56개 (핑크 발광, 속도/크기 다양)
+  const n = 56;
+  for (let i = 0; i < n; i++) {
+    const a = (Math.PI * 2 * i) / n + Math.random() * 0.3;
+    const sp = (240 + Math.random() * 720) * s;
+    sparks.push({ x: cx, y: cy, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+      r: (1.6 + Math.random() * 3.4) * s, life: 0, max: 0.6 + Math.random() * 0.7,
+      tw: Math.random() * Math.PI * 2,
+      img: EFFECT_SPRITES[(Math.random() * EFFECT_SPRITES.length) | 0] });
+  }
+
+  // 줄을 타고 위로 솟구치는 빛줄기
+  for (let i = 0; i < 10; i++) {
+    streaks.push({ x: cx + (Math.random() - 0.5) * 14 * s, y: cy,
+      vy: -(360 + Math.random() * 520) * s, r: (2 + Math.random() * 3) * s,
+      life: 0, max: 0.5 + Math.random() * 0.4,
+      img: Math.random() < 0.5 ? spritePink : spriteMagenta });
+  }
+}
+
+function updateEffects(dt) {
+  for (let i = pulses.length - 1; i >= 0; i--) {
+    const p = pulses[i];
+    p.life += dt;
+    if (p.life - p.delay > p.max) pulses.splice(i, 1);
+  }
+  for (let i = flashes.length - 1; i >= 0; i--) {
+    flashes[i].life += dt;
+    if (flashes[i].life > flashes[i].max) flashes.splice(i, 1);
+  }
+  for (let i = sparks.length - 1; i >= 0; i--) {
+    const s = sparks[i];
+    s.life += dt;
+    if (s.life > s.max) { sparks.splice(i, 1); continue; }
+    s.vx *= Math.pow(0.1, dt); // 빠르게 감속
+    s.vy *= Math.pow(0.1, dt);
+    s.vy += 260 * S() * dt;    // 약한 중력
+    s.x += s.vx * dt;
+    s.y += s.vy * dt;
+  }
+  for (let i = streaks.length - 1; i >= 0; i--) {
+    const k = streaks[i];
+    k.life += dt;
+    if (k.life > k.max) { streaks.splice(i, 1); continue; }
+    k.vy *= Math.pow(0.25, dt);
+    k.y += k.vy * dt;
+  }
+}
+
+function drawEffects() {
+  const s = S();
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  // 큰 글로우 플래시
+  for (const f of flashes) {
+    const t = f.life / f.max;
+    blobImg(spritePink, f.x, f.y, f.r * (0.6 + 0.8 * t), (1 - t) * 0.9);
+    blobImg(sprite, f.x, f.y, f.r * 0.4 * (0.6 + t), (1 - t) * 0.8);
+  }
+  // 줄을 타고 솟는 빛줄기
+  for (const k of streaks) {
+    blobImg(k.img, k.x, k.y, k.r, (1 - k.life / k.max) * 0.85);
+  }
+  // 방사 스파클
+  for (const sp of sparks) {
+    const fade = 1 - sp.life / sp.max;
+    const tw = 0.55 + 0.45 * Math.sin(sp.life * 24 + sp.tw); // 반짝임
+    blobImg(sp.img, sp.x, sp.y, sp.r, fade * tw);
+  }
+  ctx.restore();
+  // 빛 고리 (색상별)
+  ctx.save();
+  for (const p of pulses) {
+    const t = (p.life - p.delay) / p.max;
+    if (t < 0 || t > 1) continue;
+    const ease = 1 - Math.pow(1 - t, 3); // ease-out 확장
+    const r = p.r0 + (p.r1 - p.r0) * ease;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(${p.rgb}, ${(1 - t) * 0.9})`;
+    ctx.lineWidth = (4 * (1 - t) + 0.5) * s;
+    ctx.shadowColor = `rgba(${p.rgb}, 0.9)`;
+    ctx.shadowBlur = 12 * s;
+    ctx.stroke();
+  }
+  ctx.restore();
+  ctx.globalAlpha = 1;
+}
+
+function updateCord(now, dt) {
+  if (!cord.grabbedBy) {
+    // 놓으면 원위치로 복귀 (~0.4초 ease-out)
+    cord.y += (cordRestY() - cord.y) * Math.min(1, 9 * dt);
+  }
+  if (cord.on && now > cord.onUntil) cord.on = false;
+  cord.onLabelAlpha += ((cord.on ? 1 : 0) - cord.onLabelAlpha) * Math.min(1, 8 * dt);
+  // 물도 안 나오고 잡고 있지도 않으면 흰색으로 복귀, 그 외엔 핑크 유지
+  if (!cord.on && !cord.grabbedBy) cord.pinkTarget = 0;
+  cord.pink += (cord.pinkTarget - cord.pink) * Math.min(1, 14 * dt); // "삭" 빠르게 전환
+}
+
+function drawCord() {
+  const ax = cordX();
+  const s = S();
+  // 흰색(255,255,255) → 핑크(255,95,165) 보간
+  const p = cord.pink;
+  const cg = Math.round(255 - 160 * p);
+  const cb = Math.round(255 - 90 * p);
+  const col = (a) => `rgba(255, ${cg}, ${cb}, ${a})`;
+
+  ctx.save();
+  ctx.strokeStyle = col(0.95);
+  ctx.shadowColor = col(0.6 + 0.3 * p);
+  ctx.shadowBlur = (6 + 8 * p) * s; // 핑크일 때 더 환하게
+
+  // 줄: 곧은 수직선, 당기면 길어지기만 한다
+  ctx.lineWidth = 4 * s;
+  ctx.beginPath();
+  ctx.moveTo(ax, 0);
+  ctx.lineTo(ax, cord.y);
+  ctx.stroke();
+
+  // 알약 모양 손잡이
+  const hw = 44 * s, hh = 19 * s;
+  ctx.lineWidth = 5 * s;
+  ctx.fillStyle = cord.grabbedBy || p > 0.05
+    ? col(0.35 + 0.55 * Math.max(p, cord.grabbedBy ? 1 : 0))
+    : col(0.22);
+  ctx.beginPath();
+  ctx.roundRect(ax - hw, cord.y, hw * 2, hh * 2, hh);
+  ctx.fill();
+  ctx.stroke();
+
+  // ON 라벨 (손잡이 아래에 붙어 함께 움직인다)
+  if (cord.onLabelAlpha > 0.01) {
+    ctx.shadowBlur = 4 * s;
+    ctx.fillStyle = col(cord.onLabelAlpha);
+    ctx.font = `bold ${28 * s}px -apple-system, sans-serif`;
+    ctx.textAlign = "center";
+    ctx.fillText("ON", ax, cord.y + hh * 2 + 32 * s);
+  }
+  ctx.restore();
+}
+
+// ── 사람 추적 (Pose + 세그멘테이션 마스크) ───────────────
+// 머리 위치 → 물줄기 띠의 중심. 실루엣 마스크 → 물방울 충돌.
+let poseLandmarker = null;
+const poseCanvas = document.createElement("canvas");
+const poseCtx = poseCanvas.getContext("2d");
+let maskData = null, maskW = 0, maskH = 0;
+let headX = null, headWidth = 0, lastPoseSeen = 0;
+let frameMap = null; // 프레임당 한 번만 계산하는 좌표 변환 (물방울마다 재계산 방지)
+
+function runPose(now) {
+  poseCtx.drawImage(video, 0, 0, poseCanvas.width, poseCanvas.height);
+  const res = poseLandmarker.detectForVideo(poseCanvas, now);
+  const lm = res.landmarks?.[0];
+  if (lm) {
+    const m = coverMap();
+    const nose = toCanvas(lm[0], m);
+    const earL = toCanvas(lm[7], m);
+    const earR = toCanvas(lm[8], m);
+    headX = nose.x;
+    headWidth = Math.abs(earL.x - earR.x);
+    lastPoseSeen = now;
+  }
+  const mask = res.segmentationMasks?.[0];
+  if (mask) {
+    maskW = mask.width;
+    maskH = mask.height;
+    maskData = mask.getAsFloat32Array();
+    mask.close(); // GPU 리소스 누수 방지
+  }
+}
+
+// 캔버스 좌표 → 실루엣 마스크 값 (0=배경, 1=사람)
+function sampleMask(cx, cy) {
+  if (!maskData || !frameMap) return 0;
+  const m = frameMap;
+  const nx = (W() - cx - m.offX) / (video.videoWidth * m.scale);
+  const ny = (cy - m.offY) / (video.videoHeight * m.scale);
+  if (nx < 0 || nx > 1 || ny < 0 || ny > 1) return 0;
+  const ix = Math.min(maskW - 1, (nx * maskW) | 0);
+  const iy = Math.min(maskH - 1, (ny * maskH) | 0);
+  return maskData[iy * maskW + ix];
+}
+
+// 몸 표면의 내리막 접선 방향 (물이 흘러내릴 방향)
+function downhillTangent(cx, cy) {
+  const e = 8 * S();
+  const gx = sampleMask(cx + e, cy) - sampleMask(cx - e, cy);
+  const gy = sampleMask(cx, cy + e) - sampleMask(cx, cy - e);
+  // 등고선 방향(기울기에 수직) 중 아래로 향하는 쪽
+  let tx = -gy, ty = gx;
+  if (ty < 0) { tx = -tx; ty = -ty; }
+  const len = Math.hypot(tx, ty);
+  if (len < 0.02) return null; // 평평하거나 마스크 깊숙한 곳
+  return { x: tx / len, y: ty / len };
+}
+
+// ── 물 (샤워) ────────────────────────────────────────────
+// 사용자 머리 위에서 30개의 곧은 점선 줄기가 쏟아진다.
+// 몸에 닿으면 사라지면서 반짝이고, 윤곽을 따라 흘러내린다.
+const STREAM_COUNT = 30;
+const streams = [];
+for (let i = 0; i < STREAM_COUNT; i++) {
+  const t = i / (STREAM_COUNT - 1);
+  streams.push({
+    offset: t - 0.5,                 // 띠 중심 기준 위치
+    weight: 0.55 + 0.45 * t,         // 오른쪽(줄 쪽)일수록 굵고 촘촘
+    nextDrop: 0,
+  });
+}
+const band = { cx: 0, w: 0, init: false }; // 물줄기 띠 (부드럽게 사람을 따라감)
+const drops = [];
+const mist = []; // 충돌 후 입자: pin(반짝), slide(흘러내림), fly(튐)
+
+// 부드러운 원형 발광 스프라이트 (가산 합성용). 중심은 흰빛, 외곽은 지정 색.
+function makeSprite(midColor, edgeColor) {
+  const c = document.createElement("canvas");
+  c.width = c.height = 64;
+  const g = c.getContext("2d");
+  const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grad.addColorStop(0, "rgba(255,255,255,1)");
+  grad.addColorStop(0.45, midColor);
+  grad.addColorStop(1, edgeColor);
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 64, 64);
+  return c;
+}
+const sprite = makeSprite("rgba(255,255,255,0.85)", "rgba(255,255,255,0)"); // 물방울(흰색)
+const spritePink = makeSprite("rgba(255,150,205,0.95)", "rgba(255,90,165,0)");   // 핑크
+const spriteMagenta = makeSprite("rgba(255,120,235,0.95)", "rgba(220,70,200,0)"); // 마젠타
+function blobImg(img, x, y, r, a) {
+  ctx.globalAlpha = Math.max(0, Math.min(1, a));
+  ctx.drawImage(img, x - r * 1.6, y - r * 1.6, r * 3.2, r * 3.2);
+}
+function blob(x, y, r, a) { blobImg(sprite, x, y, r, a); }
+
+function updateBand(now, dt) {
+  const tracked = now - lastPoseSeen < 1500 && headX !== null;
+  const targetCx = tracked ? headX : W() / 2;
+  const targetW = tracked
+    ? Math.min(0.7 * W(), Math.max(0.3 * W(), 5.5 * headWidth))
+    : 0.3 * W();
+  if (!band.init) { band.cx = targetCx; band.w = targetW; band.init = true; }
+  band.cx += (targetCx - band.cx) * Math.min(1, 2.5 * dt);
+  band.w += (targetW - band.w) * Math.min(1, 2.5 * dt);
+}
+
+// ── 빗소리 (실제 녹음 음원 rain.mp3 루프 재생) ───────────
+// 물이 쏟아지는 동안 실제 빗소리를 부드럽게 페이드인/아웃하며 반복 재생한다.
+let audioCtx = null;
+let rainBuffer = null;
+let rainSource = null;
+let rainGain = null;
+let rainLoading = false;
+let rainOn = false;
+
+function initAudio() {
+  if (audioCtx) return;
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return;
+  audioCtx = new AC();
+  rainGain = audioCtx.createGain();
+  rainGain.gain.value = 0;
+  rainGain.connect(audioCtx.destination);
+  loadRain();
+}
+
+async function loadRain() {
+  if (rainBuffer || rainLoading || !audioCtx) return;
+  rainLoading = true;
+  try {
+    const res = await fetch("rain.mp3");
+    const data = await res.arrayBuffer();
+    rainBuffer = await audioCtx.decodeAudioData(data);
+    if (rainOn) setRain(true); // 로딩 전에 물이 켜졌다면 이제 재생 시작
+  } catch (e) {
+    console.error("빗소리 로드 실패:", e);
+  }
+  rainLoading = false;
+}
+
+// 첫 사용자 제스처에서 오디오를 활성화 (브라우저 자동재생 정책)
+function unlockAudio() {
+  initAudio();
+  if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
+}
+["pointerdown", "touchstart", "keydown"].forEach((e) =>
+  window.addEventListener(e, unlockAudio)
+);
+
+// 빗소리 루프 켜기/끄기 (음량 페이드)
+function setRain(on) {
+  if (!audioCtx || !rainGain) return;
+  const t = audioCtx.currentTime;
+  if (on && rainBuffer && !rainSource) {
+    rainSource = audioCtx.createBufferSource();
+    rainSource.buffer = rainBuffer;
+    rainSource.loop = true;
+    rainSource.connect(rainGain);
+    rainSource.start();
+  }
+  rainGain.gain.cancelScheduledValues(t);
+  rainGain.gain.setValueAtTime(rainGain.gain.value, t);
+  rainGain.gain.linearRampToValueAtTime(on ? 0.9 : 0, t + (on ? 0.3 : 0.6));
+  if (!on && rainSource) {
+    const src = rainSource;
+    rainSource = null;
+    try { src.stop(t + 0.7); } catch (e) {}
+  }
+}
+
+// 물 상태가 바뀔 때만 빗소리를 토글 (매 프레임 호출돼도 안전)
+function updateRain() {
+  if (cord.on === rainOn) return;
+  rainOn = cord.on;
+  setRain(rainOn);
+}
+
+// 물방울이 몸에 닿은 순간: 반짝임 + 윤곽 타고 흘러내리는 입자
+function impact(x, y, r) {
+  for (let k = 0; k < 2; k++) {
+    mist.push({
+      type: "pin", x: x + (Math.random() - 0.5) * 10 * S(), y: y + (Math.random() - 0.5) * 6 * S(),
+      vx: 0, vy: 0,
+      r: r * (0.45 + Math.random() * 0.3),
+      life: 0, maxLife: 0.2 + Math.random() * 0.3,
+    });
+  }
+  const n = 1 + (Math.random() < 0.5 ? 1 : 0);
+  for (let k = 0; k < n; k++) {
+    mist.push({
+      type: "slide", x, y,
+      vx: 0, vy: 60 * S(),
+      r: r * (0.5 + Math.random() * 0.35),
+      speed: (300 + Math.random() * 100) * S(), // 윤곽을 타는 속도 (영상 측정치)
+      life: 0, maxLife: 0.5 + Math.random() * 0.7,
+    });
+  }
+}
+
+function updateWater(now, dt, handPoints) {
+  const g = 1.39 * H();        // 중력 (영상 측정: 1600px/s² @1152p)
+  const v0 = 0.82 * H();       // 초기 낙하 속도 (영상 측정: 950px/s @1152p)
+
+  // 물방울 생성 — 좌우 흔들림 없이 줄기 x를 유지한 채 떨어진다
+  if (cord.on && now >= cord.onAt) {
+    for (const st of streams) {
+      if (now >= st.nextDrop) {
+        st.nextDrop = now + 75 * (0.8 + Math.random() * 0.4);
+        if (Math.random() > st.weight + 0.25) continue; // 왼쪽일수록 가끔 건너뜀
+        drops.push({
+          x: band.cx + st.offset * band.w + (Math.random() - 0.5) * 4 * S(),
+          y: 10 * S(),
+          vy: v0 * (0.95 + Math.random() * 0.1),
+          r: (1.6 + 3.0 * st.weight + Math.random() * 1.2) * S(),
+          age: 0,
+        });
+      }
+    }
+  }
+
+  const hitR = 26 * S();
+  const maxY = 0.86 * H();
+  for (let i = drops.length - 1; i >= 0; i--) {
+    const d = drops[i];
+    d.age += dt;
+    const prevY = d.y;
+    d.vy += g * dt;
+    d.y += d.vy * dt;
+
+    if (d.y > maxY) { drops.splice(i, 1); continue; }
+
+    // 사람 실루엣에 닿으면: 윤곽 위치를 되짚어 찾아 충돌 처리
+    if (sampleMask(d.x, d.y) > 0.5) {
+      let hy = d.y;
+      const midY = (prevY + d.y) / 2;
+      if (sampleMask(d.x, midY) > 0.5) hy = midY;
+      impact(d.x, hy, d.r);
+      drops.splice(i, 1);
+      continue;
+    }
+
+    // 손 관절에 닿으면 세게 튄다
+    for (const p of handPoints) {
+      const dx = d.x - p.x, dy = d.y - p.y;
+      if (dx * dx + dy * dy < hitR * hitR) {
+        for (let k = 0; k < 3; k++) {
+          mist.push({
+            type: "fly", x: d.x, y: d.y,
+            vx: (Math.random() - 0.5) * 340 * S(),
+            vy: (-60 - Math.random() * 220) * S(),
+            r: d.r * (0.4 + Math.random() * 0.45),
+            life: 0, maxLife: 0.3 + Math.random() * 0.35,
+          });
+        }
+        drops.splice(i, 1);
+        break;
+      }
+    }
+  }
+
+  // 충돌 후 입자
+  for (let i = mist.length - 1; i >= 0; i--) {
+    const p = mist[i];
+    p.life += dt;
+    if (p.life > p.maxLife) { mist.splice(i, 1); continue; }
+    if (p.type === "slide") {
+      // 몸 위에 있는 동안 윤곽의 내리막을 따라 흘러내린다
+      if (sampleMask(p.x, p.y) > 0.4) {
+        const t = downhillTangent(p.x, p.y);
+        if (t) {
+          p.vx += (t.x * p.speed - p.vx) * Math.min(1, 6 * dt);
+          p.vy += (t.y * p.speed - p.vy) * Math.min(1, 6 * dt);
+        } else {
+          p.vy += g * 0.25 * dt; // 방향을 못 찾으면 천천히 흘러내림
+        }
+      } else {
+        p.vy += g * 0.6 * dt; // 몸을 벗어나면 떨어지며 사라진다
+      }
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+    } else if (p.type === "fly") {
+      p.vy += g * 0.55 * dt;
+      p.x += p.vx * dt;
+      p.y += p.vy * dt;
+    }
+    // pin은 제자리에서 줄어들며 사라진다
+  }
+  if (mist.length > 600) mist.splice(0, mist.length - 600);
+}
+
+function drawWater() {
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  for (const d of drops) {
+    blob(d.x, d.y, d.r, Math.min(1, d.age / 0.06) * 0.95);
+  }
+  for (const p of mist) {
+    const fade = 1 - p.life / p.maxLife;
+    const r = p.type === "pin" ? p.r * (0.4 + 0.6 * fade) : p.r;
+    blob(p.x, p.y, r, 0.9 * fade);
+  }
+  ctx.restore();
+  ctx.globalAlpha = 1;
+}
+
+// ── 손 추적 ──────────────────────────────────────────────
+const hands = new Map(); // handedness("Left"/"Right") -> state
+
+function getHandState(key) {
+  if (!hands.has(key)) {
+    hands.set(key, {
+      rings: FINGERTIPS.map(() => ({ x: 0, y: 0, init: false })),
+      fistFrames: 0,
+      openFrames: 0,
+      isFist: false,
+      center: { x: 0, y: 0 },
+      points: [],
+      lastSeen: 0,
+    });
+  }
+  return hands.get(key);
+}
+
+// 손가락이 굽었는지: 손끝이 두 번째 관절보다 손목에 가까우면 굽음
+function countCurledFingers(lm) {
+  const wrist = lm[0];
+  const d = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+  let curled = 0;
+  for (const [tip, pip] of [[8, 6], [12, 10], [16, 14], [20, 18]]) {
+    if (d(lm[tip], wrist) < d(lm[pip], wrist)) curled++;
+  }
+  return curled;
+}
+
+function processHand(key, lm, now) {
+  const state = getHandState(key);
+  state.lastSeen = now;
+  const m = coverMap();
+
+  // 물방울 충돌용 손 전체 좌표
+  state.points = lm.map((p) => toCanvas(p, m));
+
+  // 손 중심 (검지~새끼 뿌리 관절 평균)
+  const mcp = [5, 9, 13, 17].map((i) => state.points[i]);
+  state.center.x = (mcp[0].x + mcp[1].x + mcp[2].x + mcp[3].x) / 4;
+  state.center.y = (mcp[0].y + mcp[1].y + mcp[2].y + mcp[3].y) / 4;
+
+  // 링이 손끝을 부드럽게 따라가도록 보간
+  FINGERTIPS.forEach((idx, i) => {
+    const ring = state.rings[i];
+    const t = state.points[idx];
+    if (!ring.init) { ring.x = t.x; ring.y = t.y; ring.init = true; }
+    ring.x += (t.x - ring.x) * 0.45;
+    ring.y += (t.y - ring.y) * 0.45;
+  });
+
+  // 주먹 / 펴짐 판정 (몇 프레임 연속이어야 확정 — 떨림 방지)
+  const curled = countCurledFingers(lm);
+  if (curled >= 3) { state.fistFrames++; state.openFrames = 0; }
+  else if (curled <= 1) { state.openFrames++; state.fistFrames = 0; }
+  if (!state.isFist && state.fistFrames >= 3) state.isFist = true;
+  else if (state.isFist && state.openFrames >= 2) state.isFist = false;
+
+  // ── 손잡이 잡기 / 당기기 / 놓기 ──
+  // 손잡이는 줄 축 위에서 세로로만 움직인다
+  const restY = cordRestY();
+  const grabRadius = 120 * S();
+  const nearHandle = Math.hypot(state.center.x - cordX(), state.center.y - cord.y) < grabRadius;
+
+  if (cord.grabbedBy === key) {
+    if (state.isFist) {
+      const maxY = restY + MAX_TRAVEL * H();
+      cord.y = Math.min(maxY, Math.max(restY, state.center.y));
+      // 끝까지 당긴 순간(잡은 동안 한 번) 예쁜 효과
+      if (!cord.fullPulled && cord.y >= maxY - 1) {
+        cord.fullPulled = true;
+        onFullPull();
+      }
+    } else {
+      // 손바닥을 펴서 놓는 순간: 충분히 당겼으면 샤워 ON
+      cord.grabbedBy = null;
+      cord.fullPulled = false;
+      if (cord.y - restY > 0.45 * MAX_TRAVEL * H()) triggerShower(now);
+    }
+  } else if (!cord.grabbedBy && state.isFist && nearHandle) {
+    cord.grabbedBy = key;
+    cord.fullPulled = false;
+  }
+
+  // 손끝 링 그리기
+  const ringRadius = Math.max(
+    10,
+    Math.hypot(state.points[5].x - state.points[17].x, state.points[5].y - state.points[17].y) * 0.22
+  );
+  ctx.save();
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
+  ctx.lineWidth = 2.5 * S();
+  ctx.shadowColor = "rgba(255, 255, 255, 0.8)";
+  ctx.shadowBlur = 8;
+  for (const ring of state.rings) {
+    ctx.beginPath();
+    ctx.arc(ring.x, ring.y, ringRadius, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// ── 메인 루프 ────────────────────────────────────────────
+let handLandmarker = null;
+let lastVideoTime = -1;
+let lastFrameTime = performance.now();
+let lastResults = null;
+
+function resize() {
+  canvas.width = window.innerWidth * devicePixelRatio;
+  canvas.height = window.innerHeight * devicePixelRatio;
+  canvas.style.width = window.innerWidth + "px";
+  canvas.style.height = window.innerHeight + "px";
+  cord.y = cordRestY();
+}
+window.addEventListener("resize", resize);
+resize();
+
+function loop() {
+  const now = performance.now();
+  const dt = Math.min((now - lastFrameTime) / 1000, 0.05);
+  lastFrameTime = now;
+
+  if (video.readyState >= 2 && video.videoWidth) frameMap = coverMap();
+
+  if (video.readyState >= 2 && video.currentTime !== lastVideoTime) {
+    lastVideoTime = video.currentTime;
+    if (handLandmarker) lastResults = handLandmarker.detectForVideo(video, now);
+    if (poseLandmarker) runPose(now);
+  }
+
+  ctx.clearRect(0, 0, W(), H());
+
+  updateCord(now, dt);
+  drawCord();
+
+  const seenKeys = new Set();
+  if (lastResults && video.readyState >= 2) {
+    lastResults.landmarks.forEach((lm, i) => {
+      const key = lastResults.handedness[i]?.[0]?.categoryName ?? `hand${i}`;
+      seenKeys.add(key);
+      processHand(key, lm, now);
+    });
+  }
+
+  // 한동안 안 보인 손 정리 (잡고 있던 손이 사라지면 놓은 것으로 처리)
+  for (const [key, state] of hands) {
+    if (now - state.lastSeen > 400) {
+      if (cord.grabbedBy === key) {
+        cord.grabbedBy = null;
+        cord.fullPulled = false;
+        if (cord.y - cordRestY() > 0.45 * MAX_TRAVEL * H()) triggerShower(now);
+      }
+      hands.delete(key);
+    }
+  }
+
+  // 보이는 손 전체 좌표 모아 물방울 충돌 검사
+  const handPoints = [];
+  for (const [key, state] of hands) {
+    if (seenKeys.has(key)) handPoints.push(...state.points);
+  }
+
+  updateBand(now, dt);
+  updateWater(now, dt, handPoints);
+  drawWater();
+
+  updateEffects(dt);
+  drawEffects();
+
+  updateRain();
+  updateStatus(now);
+
+  requestAnimationFrame(loop);
+}
+
+// 안내 문구 표시 여부 결정.
+// 레버를 잡고 있거나 물이 나오는 중이면 "조작 중"으로 보고 타이머를 리셋하고,
+// 그 외 상태(레버를 안 당김)가 IDLE_PROMPT_MS 이상 지속되면 안내를 다시 표시한다.
+// 사용자가 화면에 보이는지 여부와 무관하다.
+function updateStatus(now) {
+  if (!ready) return; // 로딩 문구는 init()이 직접 관리
+  status.textContent = PROMPT_TEXT;
+  if (cord.on || cord.grabbedBy) lastInteractAt = now;
+  const idleEnough = now - lastInteractAt > IDLE_PROMPT_MS;
+  status.style.opacity = (!cord.on && idleEnough) ? "1" : "0";
+}
+
+async function init() {
+  loop(); // 카메라 준비 전에도 줄/손잡이는 보이도록 먼저 시작
+  try {
+    status.textContent = "모델 불러오는 중…";
+    const vision = await FilesetResolver.forVisionTasks(
+      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+    );
+    [handLandmarker, poseLandmarker] = await Promise.all([
+      HandLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+          delegate: "GPU",
+        },
+        numHands: 2,
+        runningMode: "VIDEO",
+      }),
+      PoseLandmarker.createFromOptions(vision, {
+        baseOptions: {
+          modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+          delegate: "GPU",
+        },
+        numPoses: 1,
+        outputSegmentationMasks: true,
+        runningMode: "VIDEO",
+      }),
+    ]);
+
+    status.textContent = "카메라 켜는 중…";
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
+      audio: false,
+    });
+    video.srcObject = stream;
+    await new Promise((res) => (video.onloadedmetadata = res));
+
+    // 포즈/마스크는 다운스케일한 프레임으로 추정 (마스크 복사 비용 절감)
+    poseCanvas.width = 320;
+    poseCanvas.height = Math.round((320 * video.videoHeight) / video.videoWidth);
+
+    status.textContent = PROMPT_TEXT;
+    status.style.opacity = "1";
+    ready = true; // 이후 안내 표시는 updateStatus()가 관리
+    unlockAudio(); // 카메라 허용 동작에 이어 오디오도 활성화 시도
+
+  } catch (err) {
+    status.textContent =
+      err.name === "NotAllowedError"
+        ? "카메라 권한을 허용해 주세요"
+        : "오류: " + err.message;
+    console.error(err);
+  }
+}
+
+// 디버그/테스트용
+window.__cord = cord;
+window.__test = {
+  shower: () => triggerShower(performance.now()),
+  set: (o) => {
+    if ("ready" in o) ready = o.ready;
+    if ("lastInteractAt" in o) lastInteractAt = o.lastInteractAt;
+    if ("poseSeen" in o) lastPoseSeen = o.poseSeen;
+  },
+  state: () => ({ ready, lastInteractAt, lastPoseSeen, on: cord.on, opacity: status.style.opacity }),
+  tick: (now) => { updateStatus(now); return status.style.opacity; },
+  fullPull: () => { cord.y = cordRestY() + MAX_TRAVEL * H(); onFullPull(); return { pulses: pulses.length, sparks: sparks.length }; },
+  step: (n = 8, dt = 0.05) => { const t = performance.now(); for (let i = 0; i < n; i++) { updateCord(t, dt); updateEffects(dt); } return { pink: +cord.pink.toFixed(2), pulses: pulses.length, sparks: sparks.length }; },
+  audio: () => ({ ctx: !!audioCtx, state: audioCtx?.state ?? "none", rainLoaded: !!rainBuffer, rainOn }),
+  rain: async (on) => {
+    unlockAudio();
+    await loadRain();
+    cord.on = on; updateRain();
+    return { state: audioCtx?.state, rainLoaded: !!rainBuffer, playing: !!rainSource, gain: rainGain?.gain.value };
+  },
+};
+
+init();
+</script>
+</body>
+</html>
