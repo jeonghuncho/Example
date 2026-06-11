@@ -321,14 +321,14 @@ function sliceMelon(m, dirAngle) {
     });
   }
   // 과즙 분출
-  for (let k = 0; k < 34; k++) {
+  for (let k = 0; k < 18; k++) {
     const a = Math.random() * Math.PI * 2;
     const sp = (120 + Math.random() * 620) * S();
     juices.push({ x: m.x, y: m.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 0.1 * H(),
       r: (3 + Math.random() * 6) * S(), life: 0, max: 0.5 + Math.random() * 0.6 });
   }
   // 씨 튀기기
-  for (let k = 0; k < 9; k++) {
+  for (let k = 0; k < 6; k++) {
     const a = Math.random() * Math.PI * 2;
     const sp = (200 + Math.random() * 480) * S();
     seeds.push({ x: m.x, y: m.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 0.2 * H(),
@@ -354,7 +354,7 @@ function sliceMelon(m, dirAngle) {
   shockwaves.push({ x: m.x, y: m.y, life: 0, max: 0.55, r0: m.r * 0.4, r1: m.r * 4.5, rgb: "255,90,40" });
 
   // 불꽃 스파크
-  for (let k = 0; k < 26; k++) {
+  for (let k = 0; k < 14; k++) {
     const a = Math.random() * Math.PI * 2;
     const sp = (320 + Math.random() * 960) * S();
     sparks.push({ x: m.x, y: m.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
@@ -427,8 +427,6 @@ function drawDebris() {
     const dx = Math.cos(sl.angle) * sl.len / 2, dy = Math.sin(sl.angle) * sl.len / 2;
     ctx.strokeStyle = `rgba(255,255,255,${a})`;
     ctx.lineWidth = 6 * S() * a + 1;
-    ctx.shadowColor = "rgba(255,255,255,0.9)";
-    ctx.shadowBlur = 12 * S();
     ctx.beginPath();
     ctx.moveTo(sl.x - dx, sl.y - dy);
     ctx.lineTo(sl.x + dx, sl.y + dy);
@@ -474,8 +472,6 @@ function drawImpactWorld() {
     ctx.arc(w.x, w.y, r, 0, Math.PI * 2);
     ctx.strokeStyle = `rgba(${w.rgb},${(1 - t) * 0.9})`;
     ctx.lineWidth = (10 * (1 - t) + 1) * S();
-    ctx.shadowColor = `rgba(${w.rgb},0.9)`;
-    ctx.shadowBlur = 16 * S();
     ctx.stroke();
   }
   for (const s of sparks) {
@@ -613,11 +609,10 @@ const HAND_BONES = [
 function drawOneHand(pts) {
   ctx.save();
   ctx.lineCap = "round";
-  // 뼈 (외곽 글로우)
-  ctx.shadowColor = "rgba(120,230,255,0.95)";
-  ctx.shadowBlur = 14 * S();
-  ctx.strokeStyle = "rgba(120,225,255,0.85)";
-  ctx.lineWidth = 7 * S();
+  ctx.globalCompositeOperation = "lighter"; // 가산 합성으로 그림자 없이 네온 느낌
+  // 외곽 글로우 (굵고 반투명한 시안)
+  ctx.strokeStyle = "rgba(90,200,255,0.5)";
+  ctx.lineWidth = 11 * S();
   for (const [a, b] of HAND_BONES) {
     ctx.beginPath();
     ctx.moveTo(pts[a].x, pts[a].y);
@@ -627,7 +622,6 @@ function drawOneHand(pts) {
   // 밝은 코어
   ctx.strokeStyle = "rgba(255,255,255,0.95)";
   ctx.lineWidth = 2.5 * S();
-  ctx.shadowBlur = 4 * S();
   for (const [a, b] of HAND_BONES) {
     ctx.beginPath();
     ctx.moveTo(pts[a].x, pts[a].y);
@@ -635,8 +629,6 @@ function drawOneHand(pts) {
     ctx.stroke();
   }
   // 관절 점
-  ctx.shadowColor = "rgba(150,235,255,0.9)";
-  ctx.shadowBlur = 10 * S();
   for (let i = 0; i < pts.length; i++) {
     ctx.beginPath();
     ctx.arc(pts[i].x, pts[i].y, (i === 8 ? 9 : 5.5) * S(), 0, Math.PI * 2); // 칼끝(검지)은 크게
@@ -677,8 +669,6 @@ function drawBlades(now) {
       const a = (i / b.trail.length) * (0.25 + 0.75 * bright);
       ctx.strokeStyle = `rgba(255,255,255,${a})`;
       ctx.lineWidth = (i / b.trail.length) * 12 * S() + 1;
-      ctx.shadowColor = "rgba(255,255,255,0.8)";
-      ctx.shadowBlur = 10 * S();
       ctx.beginPath();
       ctx.moveTo(p0.x, p0.y); ctx.lineTo(p1.x, p1.y);
       ctx.stroke();
@@ -700,9 +690,16 @@ let lastFrameTime = performance.now();
 let lastResults = null;
 let ready = false;
 
+// 손 인식용 다운스케일 캔버스 (풀해상도 영상 대신 작은 프레임을 처리해 부담 감소)
+const detectCanvas = document.createElement("canvas");
+const detectCtx = detectCanvas.getContext("2d");
+
+// 레티나 디스플레이에서 캔버스 픽셀 수를 제한해 성능 확보 (M1 최적화).
+// dpr 2~3을 1.5로 캡하면 픽셀 수가 절반~1/4로 줄어 렌더 부담이 크게 감소한다.
+const DPR = Math.min(window.devicePixelRatio || 1, 1.5);
 function resize() {
-  canvas.width = window.innerWidth * devicePixelRatio;
-  canvas.height = window.innerHeight * devicePixelRatio;
+  canvas.width = Math.round(window.innerWidth * DPR);
+  canvas.height = Math.round(window.innerHeight * DPR);
   canvas.style.width = window.innerWidth + "px";
   canvas.style.height = window.innerHeight + "px";
 }
@@ -753,7 +750,9 @@ function loop() {
 
   if (handLandmarker && video.readyState >= 2 && video.currentTime !== lastVideoTime) {
     lastVideoTime = video.currentTime;
-    lastResults = handLandmarker.detectForVideo(video, now);
+    // 다운스케일한 프레임으로 인식 (정규좌표 결과라 화면 매핑은 그대로)
+    detectCtx.drawImage(video, 0, 0, detectCanvas.width, detectCanvas.height);
+    lastResults = handLandmarker.detectForVideo(detectCanvas, now);
   }
 
   ctx.clearRect(0, 0, W(), H());
@@ -808,11 +807,15 @@ async function init() {
 
     status.textContent = "카메라 켜는 중…";
     const stream = await navigator.mediaDevices.getUserMedia({
-      video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
+      video: { width: { ideal: 960 }, height: { ideal: 540 }, facingMode: "user" },
       audio: false,
     });
     video.srcObject = stream;
     await new Promise((res) => (video.onloadedmetadata = res));
+
+    // 손 인식용 다운스케일 캔버스 크기 (가로 480px 고정)
+    detectCanvas.width = 480;
+    detectCanvas.height = Math.round((480 * video.videoHeight) / video.videoWidth);
 
     ready = true;
     phase = "waiting";
