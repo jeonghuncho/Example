@@ -1,0 +1,867 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>수박 깨기 — 손을 휘둘러 수박을 가르세요</title>
+<style>
+  html, body {
+    margin: 0; padding: 0;
+    width: 100%; height: 100%;
+    background: #000;
+    overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", sans-serif;
+  }
+  #stage { position: relative; width: 100vw; height: 100vh; }
+  /* 원본 웹캠은 화면에 안 보이게 (MediaPipe 입력으로만 사용).
+     검정 배경 위에 손 뼈대만 빛나게 표현한다. */
+  #video {
+    position: absolute; top: 0; left: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
+    opacity: 0;
+    pointer-events: none;
+  }
+  #canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+  #score {
+    position: absolute; top: 22px; left: 28px;
+    color: #fff; font-size: 30px; font-weight: 700;
+    text-shadow: 0 2px 10px rgba(0,0,0,0.6);
+    letter-spacing: 0.02em;
+  }
+  #status {
+    position: absolute; top: 32px; left: 50%;
+    transform: translateX(-50%);
+    padding: 16px 34px; border-radius: 999px;
+    background: rgba(0,0,0,0.5); color: #fff;
+    font-size: 24px; font-weight: 600;
+    backdrop-filter: blur(8px); white-space: nowrap;
+    transition: opacity 0.4s;
+  }
+</style>
+</head>
+<body>
+<div id="stage">
+  <video id="video" autoplay playsinline muted></video>
+  <canvas id="canvas"></canvas>
+  <div id="score">🍉 0</div>
+  <div id="status">모델 불러오는 중…</div>
+</div>
+
+<script type="module">
+import { HandLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+
+const video  = document.getElementById("video");
+const canvas = document.getElementById("canvas");
+const ctx    = canvas.getContext("2d");
+const status = document.getElementById("status");
+const scoreEl = document.getElementById("score");
+
+const W = () => canvas.width;
+const H = () => canvas.height;
+const S = () => H() / 1080; // 1080p 기준 스케일
+
+// ── 좌표 변환: 비디오 정규좌표 → 캔버스(미러 + object-fit: cover 보정) ──
+function coverMap() {
+  const scale = Math.max(W() / video.videoWidth, H() / video.videoHeight);
+  return {
+    scale,
+    offX: (W() - video.videoWidth * scale) / 2,
+    offY: (H() - video.videoHeight * scale) / 2,
+  };
+}
+function toCanvas(p, m) {
+  return {
+    x: W() - (m.offX + p.x * video.videoWidth * m.scale),
+    y: m.offY + p.y * video.videoHeight * m.scale,
+  };
+}
+
+// ── 발광 스프라이트 (가산 합성용) ────────────────────────
+function makeSprite(mid, edge) {
+  const c = document.createElement("canvas");
+  c.width = c.height = 64;
+  const g = c.getContext("2d");
+  const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  grad.addColorStop(0, "rgba(255,255,255,1)");
+  grad.addColorStop(0.45, mid);
+  grad.addColorStop(1, edge);
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 64, 64);
+  return c;
+}
+const spriteJuice = makeSprite("rgba(255,70,90,0.95)", "rgba(220,30,60,0)"); // 빨간 과즙
+const spriteSpark = makeSprite("rgba(255,210,80,0.98)", "rgba(255,80,0,0)");  // 주황 불꽃
+function blobImg(img, x, y, r, a) {
+  ctx.globalAlpha = Math.max(0, Math.min(1, a));
+  ctx.drawImage(img, x - r * 1.6, y - r * 1.6, r * 3.2, r * 3.2);
+}
+
+// ── 효과음 (실제 음원 watermelon-smash.mp3) ──────────────
+let audioCtx = null, smashBuffer = null, smashLoading = false, lastSmashAt = 0;
+
+function initAudio() {
+  if (audioCtx) return;
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return;
+  audioCtx = new AC();
+  loadSmash();
+}
+async function loadSmash() {
+  if (smashBuffer || smashLoading || !audioCtx) return;
+  smashLoading = true;
+  try {
+    const res = await fetch("watermelon-smash.mp3");
+    smashBuffer = await audioCtx.decodeAudioData(await res.arrayBuffer());
+  } catch (e) { console.error("효과음 로드 실패:", e); }
+  smashLoading = false;
+}
+function unlockAudio() {
+  initAudio();
+  if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
+}
+["pointerdown", "touchstart", "keydown"].forEach((e) =>
+  window.addEventListener(e, unlockAudio));
+
+function playSmash() {
+  if (!audioCtx || audioCtx.state !== "running" || !smashBuffer) return;
+  const nowMs = performance.now();
+  if (nowMs - lastSmashAt < 60) return; // 동시 다발 슬라이스 솎아내기
+  lastSmashAt = nowMs;
+  const t = audioCtx.currentTime;
+  const src = audioCtx.createBufferSource();
+  src.buffer = smashBuffer;
+  src.playbackRate.value = 0.9 + Math.random() * 0.3; // 음색 다양화
+  const gain = audioCtx.createGain();
+  gain.gain.setValueAtTime(0.9, t);
+  gain.gain.setValueAtTime(0.9, t + 0.5);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.85);
+  src.connect(gain).connect(audioCtx.destination);
+  src.start(t, 0);
+  src.stop(t + 0.9); // 타격 순간만 짧게
+}
+
+// ── 수박 ─────────────────────────────────────────────────
+const melons = [];   // 날아다니는 통수박
+const halves = [];    // 갈라진 반쪽
+const juices = [];    // 과즙 방울
+const seeds = [];     // 씨
+const slashes = [];   // 칼자국 선
+let score = 0;
+let lastSpawn = 0;
+
+// ── 게임 단계 & 안내 문구 ────────────────────────────────
+const PROMPT_HAND  = "✋ 화면에 손바닥을 보여주세요";
+const PROMPT_SLICE = "✋ 손을 빠르게 휘둘러 수박을 가르세요!";
+let phase = "waiting";        // "waiting"(손 대기, 수박 없음) | "playing"(수박 등장)
+let started = false;          // 첫 수박을 잘랐는지 (자르면 안내 문구 숨김)
+let lastHandSeen = 0;         // 마지막으로 손이 보인 시각
+const HAND_ABSENCE_MS = 10000; // 손이 이만큼 안 보이면 점수 초기화 + 대기 상태로
+
+// ── 강렬한 임팩트 연출 상태 (철권 스타일) ────────────────
+let shake = 0;        // 화면 흔들림 강도(px)
+let flash = 0;        // 전체 화면 섬광 (1→0)
+let vignette = 0;     // 가장자리 빨강 비네트 (1→0)
+let combo = 0;
+let bestCombo = 0;
+let lastSliceAt = -9999; // 마지막으로 자른 시각 (HUD 펄스 애니메이션용)
+// 콤보 = 수박을 놓치지 않고 연속으로 자른 횟수. 한 개라도 놓치면(화면 밖으로 보내면) 0으로 끊김.
+const shockwaves = []; // 충격파 고리
+const sparks = [];     // 불꽃 스파크
+const impactTexts = []; // "n COMBO!" + 등급 문구
+
+// 콤보 등급: 높을수록 화려한 문구/색
+function comboTier(c) {
+  if (c >= 15) return { word: "GODLIKE!!!", col: ["#ff6bff", "#ff1a55"] };
+  if (c >= 10) return { word: "INSANE!!",  col: ["#ffd24d", "#ff2a6d"] };
+  if (c >= 7)  return { word: "AWESOME!",  col: ["#fff2a8", "#ff4d2a"] };
+  if (c >= 5)  return { word: "GREAT!",    col: ["#fff2a8", "#ff7a1a"] };
+  if (c >= 3)  return { word: "NICE!",     col: ["#fff6c8", "#ffb01a"] };
+  return { word: "", col: ["#fff6c8", "#ffae3a"] };
+}
+
+// 진입 방향을 랜덤하게 — 아래→위, 위→아래, 좌→우, 우→좌
+function spawnMelon(now) {
+  const r = (70 + Math.random() * 35) * S();
+  // 아래→위가 조금 더 자주 나오게 가중
+  const pat = ["up", "up", "down", "left", "right"][(Math.random() * 5) | 0];
+  let x, y, vx, vy;
+  if (pat === "up") {
+    const fromLeft = Math.random() < 0.5;
+    x = fromLeft ? W() * (0.15 + Math.random() * 0.25) : W() * (0.6 + Math.random() * 0.25);
+    y = H() + r;
+    vy = -(1.15 + Math.random() * 0.2) * H();        // 위로 던짐
+    vx = (fromLeft ? 1 : -1) * (0.05 + Math.random() * 0.12) * W();
+  } else if (pat === "down") {
+    x = W() * (0.2 + Math.random() * 0.6);
+    y = -r;
+    vy = (0.45 + Math.random() * 0.25) * H();         // 위에서 떨어짐
+    vx = (Math.random() - 0.5) * 0.25 * W();
+  } else { // left / right — 옆에서 포물선으로 가로지름
+    const fromLeft = pat === "left";
+    x = fromLeft ? -r : W() + r;
+    y = H() * (0.25 + Math.random() * 0.4);
+    vx = (fromLeft ? 1 : -1) * (0.5 + Math.random() * 0.25) * W();
+    vy = -(0.35 + Math.random() * 0.35) * H();
+  }
+  melons.push({ x, y, vx: vx * MELON_SPEED, vy: vy * MELON_SPEED, r, rot: Math.random() * 6.28,
+    vrot: (Math.random() - 0.5) * 2 });
+}
+
+// 수박 전체 속도 배율 (작을수록 느림). 같은 궤적을 유지한 채 더 천천히 움직이게 한다.
+const MELON_SPEED = 0.9;
+const GRAV = () => 2.0 * H() * MELON_SPEED * MELON_SPEED; // 중력도 배율²로 맞춰 궤적 보존
+
+function updateMelons(now, dt) {
+  // 일정 간격으로 새 수박 (동시 최대 4개)
+  if (phase === "playing" && now - lastSpawn > 1300 && melons.length < 4) {
+    lastSpawn = now;
+    spawnMelon(now);
+  }
+  for (let i = melons.length - 1; i >= 0; i--) {
+    const m = melons[i];
+    m.vy += GRAV() * dt;
+    m.x += m.vx * dt;
+    m.y += m.vy * dt;
+    m.rot += m.vrot * dt;
+    // 화면 밖(아래·좌·우)으로 벗어나면 = 못 자르고 놓침 → 콤보 끊김
+    if (m.y - m.r > H() + 60 || m.x < -m.r - 90 || m.x > W() + m.r + 90) {
+      melons.splice(i, 1);
+      if (combo > 0) { combo = 0; scoreEl.textContent = `🍉 ${score}   🔥 ${bestCombo}`; }
+    }
+  }
+}
+
+// 수박 한 통 그리기 (껍질+꼭지)
+function drawMelonBody(x, y, r, rot) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(rot);
+  // 껍질
+  const g = ctx.createRadialGradient(-r * 0.3, -r * 0.3, r * 0.2, 0, 0, r);
+  g.addColorStop(0, "#5db85d");
+  g.addColorStop(1, "#2f7d34");
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
+  ctx.fill();
+  // 줄무늬
+  ctx.strokeStyle = "rgba(20,80,30,0.55)";
+  ctx.lineWidth = r * 0.09;
+  for (let k = -2; k <= 2; k++) {
+    ctx.beginPath();
+    ctx.ellipse(0, 0, r * (0.32 + 0.001), r, (k * 0.5), -Math.PI / 2, Math.PI / 2);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// 갈라진 반쪽 그리기 (단면 과육 보임)
+function drawHalf(h) {
+  ctx.save();
+  ctx.translate(h.x, h.y);
+  ctx.rotate(h.angle + h.rot);
+  const r = h.r;
+  // 과육(빨강) 반원: 단면이 위(local)를 향하도록 아래쪽 반원을 채움
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, Math.PI);
+  ctx.closePath();
+  const g = ctx.createLinearGradient(0, 0, 0, r);
+  g.addColorStop(0, "#ff5a6e");
+  g.addColorStop(1, "#e23b53");
+  ctx.fillStyle = g;
+  ctx.fill();
+  // 껍질 호 (초록)
+  ctx.lineWidth = r * 0.13;
+  ctx.strokeStyle = "#2f7d34";
+  ctx.beginPath();
+  ctx.arc(0, 0, r - r * 0.04, 0, Math.PI);
+  ctx.stroke();
+  // 단면 가장자리 밝은 테
+  ctx.lineWidth = r * 0.05;
+  ctx.strokeStyle = "rgba(255,225,230,0.9)";
+  ctx.beginPath();
+  ctx.moveTo(-r, 0); ctx.lineTo(r, 0);
+  ctx.stroke();
+  // 단면 씨
+  ctx.fillStyle = "rgba(30,20,20,0.9)";
+  for (const sd of h.seeds) {
+    ctx.beginPath();
+    ctx.ellipse(sd.x * r, sd.y * r, r * 0.035, r * 0.06, 0.4, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function sliceMelon(m, dirAngle) {
+  melons.splice(melons.indexOf(m), 1);
+  score++;
+  started = true; // 처음 자르면 안내 문구가 사라진다
+  playSmash();
+
+  // 단면용 씨 배치 (반원 내부, y는 0~1 아래쪽)
+  const makeSeeds = () => {
+    const arr = [];
+    for (let k = 0; k < 7; k++) {
+      arr.push({ x: (Math.random() - 0.5) * 1.2, y: 0.25 + Math.random() * 0.6 });
+    }
+    return arr;
+  };
+  // 칼 방향(dirAngle)으로 갈라지고, 수직 방향으로 두 조각이 벌어짐
+  const sep = 0.5 * H();
+  const nx = Math.cos(dirAngle + Math.PI / 2), ny = Math.sin(dirAngle + Math.PI / 2);
+  for (const sign of [1, -1]) {
+    halves.push({
+      x: m.x, y: m.y, r: m.r,
+      angle: dirAngle + (sign > 0 ? 0 : Math.PI), // 단면이 칼선을 따라
+      rot: 0, vrot: (Math.random() - 0.5) * 3 + sign * 1.2,
+      vx: m.vx * 0.4 + nx * sign * sep,
+      vy: m.vy * 0.4 + ny * sign * sep - 0.15 * H(),
+      seeds: makeSeeds(), life: 0,
+    });
+  }
+  // 과즙 분출
+  for (let k = 0; k < 34; k++) {
+    const a = Math.random() * Math.PI * 2;
+    const sp = (120 + Math.random() * 620) * S();
+    juices.push({ x: m.x, y: m.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 0.1 * H(),
+      r: (3 + Math.random() * 6) * S(), life: 0, max: 0.5 + Math.random() * 0.6 });
+  }
+  // 씨 튀기기
+  for (let k = 0; k < 9; k++) {
+    const a = Math.random() * Math.PI * 2;
+    const sp = (200 + Math.random() * 480) * S();
+    seeds.push({ x: m.x, y: m.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 0.2 * H(),
+      rot: Math.random() * 6.28, vrot: (Math.random() - 0.5) * 16,
+      len: (10 + Math.random() * 6) * S(), life: 0, max: 1.0 + Math.random() * 0.6 });
+  }
+  // 칼자국
+  slashes.push({ x: m.x, y: m.y, angle: dirAngle, len: m.r * 2.6, life: 0, max: 0.25 });
+
+  // ── 철권 같은 강렬한 임팩트 연출 ──
+  const tnow = performance.now();
+  combo = combo + 1; // 자를 때마다 콤보 증가 (놓치면 updateMelons에서 0으로 끊김)
+  lastSliceAt = tnow;
+  if (combo > bestCombo) bestCombo = combo;
+  scoreEl.textContent = `🍉 ${score}   🔥 ${bestCombo}`;
+
+  shake = Math.min(46 * S(), Math.max(shake, (22 + combo * 4) * S())); // 화면 흔들림
+  flash = 1;      // 전체 섬광
+  vignette = 1;   // 가장자리 빨강
+
+  // 충격파 고리 2개
+  shockwaves.push({ x: m.x, y: m.y, life: 0, max: 0.4, r0: m.r * 0.5, r1: m.r * 6, rgb: "255,210,90" });
+  shockwaves.push({ x: m.x, y: m.y, life: 0, max: 0.55, r0: m.r * 0.4, r1: m.r * 4.5, rgb: "255,90,40" });
+
+  // 불꽃 스파크
+  for (let k = 0; k < 26; k++) {
+    const a = Math.random() * Math.PI * 2;
+    const sp = (320 + Math.random() * 960) * S();
+    sparks.push({ x: m.x, y: m.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+      r: (2.5 + Math.random() * 5) * S(), life: 0, max: 0.3 + Math.random() * 0.4 });
+  }
+
+  // 임팩트 텍스트 — 1콤보부터 매번 "n COMBO!" + 등급 문구
+  const tier = comboTier(combo);
+  impactTexts.push({
+    text: `${combo} COMBO!`, sub: tier.word, col: tier.col,
+    size: 48 + Math.min(combo, 16) * 3.4, // 콤보 클수록 크게
+    x: m.x, y: m.y, life: 0, max: 0.85, combo,
+  });
+}
+
+function updateDebris(dt) {
+  const g = GRAV();
+  for (let i = halves.length - 1; i >= 0; i--) {
+    const h = halves[i];
+    h.life += dt; h.vy += g * dt;
+    h.x += h.vx * dt; h.y += h.vy * dt; h.rot += h.vrot * dt;
+    if (h.y - h.r > H() + 60) halves.splice(i, 1);
+  }
+  for (let i = juices.length - 1; i >= 0; i--) {
+    const j = juices[i];
+    j.life += dt;
+    if (j.life > j.max) { juices.splice(i, 1); continue; }
+    j.vy += g * 0.7 * dt; j.x += j.vx * dt; j.y += j.vy * dt;
+  }
+  for (let i = seeds.length - 1; i >= 0; i--) {
+    const s = seeds[i];
+    s.life += dt;
+    if (s.life > s.max) { seeds.splice(i, 1); continue; }
+    s.vy += g * dt; s.x += s.vx * dt; s.y += s.vy * dt; s.rot += s.vrot * dt;
+  }
+  for (let i = slashes.length - 1; i >= 0; i--) {
+    slashes[i].life += dt;
+    if (slashes[i].life > slashes[i].max) slashes.splice(i, 1);
+  }
+}
+
+function drawDebris() {
+  // 과즙 (가산 발광)
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  for (const j of juices) {
+    blobImg(spriteJuice, j.x, j.y, j.r, (1 - j.life / j.max) * 0.9);
+  }
+  ctx.restore();
+  ctx.globalAlpha = 1;
+  // 갈라진 반쪽
+  for (const h of halves) drawHalf(h);
+  // 씨
+  ctx.fillStyle = "rgba(25,18,18,0.95)";
+  for (const s of seeds) {
+    ctx.save();
+    ctx.translate(s.x, s.y); ctx.rotate(s.rot);
+    ctx.globalAlpha = Math.min(1, (1 - s.life / s.max) * 1.5);
+    ctx.beginPath();
+    ctx.ellipse(0, 0, s.len * 0.35, s.len * 0.6, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+  // 칼자국 (흰 섬광)
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  for (const sl of slashes) {
+    const a = 1 - sl.life / sl.max;
+    const dx = Math.cos(sl.angle) * sl.len / 2, dy = Math.sin(sl.angle) * sl.len / 2;
+    ctx.strokeStyle = `rgba(255,255,255,${a})`;
+    ctx.lineWidth = 6 * S() * a + 1;
+    ctx.shadowColor = "rgba(255,255,255,0.9)";
+    ctx.shadowBlur = 12 * S();
+    ctx.beginPath();
+    ctx.moveTo(sl.x - dx, sl.y - dy);
+    ctx.lineTo(sl.x + dx, sl.y + dy);
+    ctx.stroke();
+  }
+  ctx.restore();
+  ctx.globalAlpha = 1;
+}
+
+// ── 강렬한 임팩트 연출: 업데이트 & 그리기 ────────────────
+function updateImpact(dt) {
+  shake *= Math.pow(0.015, dt);            // 빠르게 감쇠
+  if (shake < 0.4) shake = 0;
+  flash = Math.max(0, flash - dt / 0.16);   // ~0.16초 섬광
+  vignette = Math.max(0, vignette - dt / 0.45);
+  for (let i = shockwaves.length - 1; i >= 0; i--) {
+    shockwaves[i].life += dt;
+    if (shockwaves[i].life > shockwaves[i].max) shockwaves.splice(i, 1);
+  }
+  for (let i = sparks.length - 1; i >= 0; i--) {
+    const s = sparks[i];
+    s.life += dt;
+    if (s.life > s.max) { sparks.splice(i, 1); continue; }
+    s.vx *= Math.pow(0.05, dt); s.vy *= Math.pow(0.05, dt);
+    s.vy += GRAV() * 0.4 * dt;
+    s.x += s.vx * dt; s.y += s.vy * dt;
+  }
+  for (let i = impactTexts.length - 1; i >= 0; i--) {
+    impactTexts[i].life += dt;
+    if (impactTexts[i].life > impactTexts[i].max) impactTexts.splice(i, 1);
+  }
+}
+
+// 월드 좌표(화면 흔들림 안)에서 그리는 것: 충격파 + 스파크
+function drawImpactWorld() {
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  for (const w of shockwaves) {
+    const t = w.life / w.max;
+    const ease = 1 - Math.pow(1 - t, 3);
+    const r = w.r0 + (w.r1 - w.r0) * ease;
+    ctx.beginPath();
+    ctx.arc(w.x, w.y, r, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(${w.rgb},${(1 - t) * 0.9})`;
+    ctx.lineWidth = (10 * (1 - t) + 1) * S();
+    ctx.shadowColor = `rgba(${w.rgb},0.9)`;
+    ctx.shadowBlur = 16 * S();
+    ctx.stroke();
+  }
+  for (const s of sparks) {
+    blobImg(spriteSpark, s.x, s.y, s.r, (1 - s.life / s.max) * 0.95);
+  }
+  ctx.restore();
+  ctx.globalAlpha = 1;
+}
+
+// 화면 고정으로 그리는 것: 섬광 + 비네트 + 콤보 HUD + 임팩트 텍스트
+function drawImpactScreen(now) {
+  if (flash > 0) {
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    ctx.fillStyle = `rgba(255,235,200,${flash * 0.55})`;
+    ctx.fillRect(0, 0, W(), H());
+    ctx.restore();
+  }
+  if (vignette > 0) {
+    const g = ctx.createRadialGradient(W() / 2, H() / 2, H() * 0.3, W() / 2, H() / 2, H() * 0.75);
+    g.addColorStop(0, "rgba(200,0,0,0)");
+    g.addColorStop(1, `rgba(190,0,0,${vignette * 0.6})`);
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W(), H());
+  }
+
+  // ── 진행 중 콤보 HUD (큰 숫자) — 콤보가 유지되는 동안 계속 표시 ──
+  if (combo >= 1) {
+    const tier = comboTier(combo);
+    const cx = W() / 2, cy = 210 * S();
+    const pulse = 1 + 0.25 * Math.max(0, 1 - (now - lastSliceAt) / 130); // 자른 직후 커졌다 줄어듦
+    ctx.save();
+    ctx.textAlign = "center";
+    ctx.translate(cx, cy);
+    ctx.scale(pulse, pulse);
+    ctx.font = `900 ${78 * S()}px -apple-system, sans-serif`;
+    ctx.lineWidth = 9 * S();
+    ctx.strokeStyle = "rgba(60,0,12,0.95)";
+    ctx.strokeText(`${combo}`, 0, 0);
+    const grad = ctx.createLinearGradient(0, -50 * S(), 0, 30 * S());
+    grad.addColorStop(0, tier.col[0]);
+    grad.addColorStop(1, tier.col[1]);
+    ctx.fillStyle = grad;
+    ctx.fillText(`${combo}`, 0, 0);
+    // "COMBO" 라벨
+    ctx.font = `800 ${26 * S()}px -apple-system, sans-serif`;
+    ctx.lineWidth = 5 * S();
+    ctx.strokeText("COMBO", 0, 34 * S());
+    ctx.fillStyle = "#fff";
+    ctx.fillText("COMBO", 0, 34 * S());
+    ctx.restore();
+  }
+
+  // ── 자를 때마다 튀어나오는 "n COMBO!" + 등급 문구 ──
+  for (const t of impactTexts) {
+    const k = t.life / t.max;
+    const pop = 1 + 0.4 * (1 - Math.min(1, t.life / 0.13));
+    const rise = -60 * S() - t.life * 50 * S(); // 살짝 떠오름
+    const alpha = k < 0.7 ? 1 : 1 - (k - 0.7) / 0.3;
+    ctx.save();
+    ctx.translate(t.x, t.y + rise);
+    ctx.scale(pop, pop);
+    ctx.globalAlpha = alpha;
+    ctx.textAlign = "center";
+    ctx.lineWidth = 8 * S();
+    ctx.strokeStyle = "rgba(90,0,10,0.95)";
+    const grad = ctx.createLinearGradient(0, -40 * S(), 0, 20 * S());
+    grad.addColorStop(0, t.col[0]);
+    grad.addColorStop(1, t.col[1]);
+    // 메인 콤보 텍스트
+    ctx.font = `900 ${t.size * S()}px -apple-system, sans-serif`;
+    ctx.strokeText(t.text, 0, 0);
+    ctx.fillStyle = grad;
+    ctx.fillText(t.text, 0, 0);
+    // 등급 문구 (있을 때만, 위쪽에)
+    if (t.sub) {
+      ctx.font = `900 ${t.size * 0.62 * S()}px -apple-system, sans-serif`;
+      ctx.lineWidth = 6 * S();
+      ctx.strokeText(t.sub, 0, -t.size * 0.85 * S());
+      ctx.fillStyle = grad;
+      ctx.fillText(t.sub, 0, -t.size * 0.85 * S());
+    }
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+}
+
+// ── 손(칼날) 추적 ────────────────────────────────────────
+const blades = new Map(); // 손별 칼끝 상태 (검지 끝)
+const SLICE_SPEED = 1.4;  // 화면너비/초 — 이 속도 이상 휘둘러야 베어짐
+
+function getBlade(key) {
+  if (!blades.has(key)) blades.set(key, { x: 0, y: 0, px: 0, py: 0, speed: 0, trail: [], init: false, lastSeen: 0 });
+  return blades.get(key);
+}
+
+function processHand(key, lm, now, dt) {
+  const b = getBlade(key);
+  b.lastSeen = now;
+  const m = coverMap();
+  const tip = toCanvas(lm[8], m); // 검지 끝 = 칼끝
+  if (!b.init) { b.x = tip.x; b.y = tip.y; b.init = true; }
+  b.px = b.x; b.py = b.y;
+  b.x = tip.x; b.y = tip.y;
+  const dist = Math.hypot(b.x - b.px, b.y - b.py);
+  b.speed = dt > 0 ? dist / dt / W() : 0; // 화면너비/초
+
+  // 칼날 자취
+  b.trail.push({ x: b.x, y: b.y, t: now });
+  while (b.trail.length > 10) b.trail.shift();
+
+  // 빠르게 휘두르는 중이면 통수박과 충돌 검사 (선분 교차)
+  if (b.speed > SLICE_SPEED) {
+    for (let i = melons.length - 1; i >= 0; i--) {
+      const mel = melons[i];
+      if (segCircleHit(b.px, b.py, b.x, b.y, mel.x, mel.y, mel.r)) {
+        const dirAngle = Math.atan2(b.y - b.py, b.x - b.px);
+        sliceMelon(mel, dirAngle);
+      }
+    }
+  }
+}
+
+// 손 뼈대 연결 (MediaPipe 21 랜드마크)
+const HAND_BONES = [
+  [0,1],[1,2],[2,3],[3,4],          // 엄지
+  [0,5],[5,6],[6,7],[7,8],          // 검지
+  [5,9],[9,10],[10,11],[11,12],     // 중지
+  [9,13],[13,14],[14,15],[15,16],   // 약지
+  [13,17],[17,18],[18,19],[19,20],  // 새끼
+  [0,17],                           // 손바닥
+];
+
+// 손 하나의 뼈대를 네온빛으로 그린다 (pts = 화면좌표 21점)
+function drawOneHand(pts) {
+  ctx.save();
+  ctx.lineCap = "round";
+  // 뼈 (외곽 글로우)
+  ctx.shadowColor = "rgba(120,230,255,0.95)";
+  ctx.shadowBlur = 14 * S();
+  ctx.strokeStyle = "rgba(120,225,255,0.85)";
+  ctx.lineWidth = 7 * S();
+  for (const [a, b] of HAND_BONES) {
+    ctx.beginPath();
+    ctx.moveTo(pts[a].x, pts[a].y);
+    ctx.lineTo(pts[b].x, pts[b].y);
+    ctx.stroke();
+  }
+  // 밝은 코어
+  ctx.strokeStyle = "rgba(255,255,255,0.95)";
+  ctx.lineWidth = 2.5 * S();
+  ctx.shadowBlur = 4 * S();
+  for (const [a, b] of HAND_BONES) {
+    ctx.beginPath();
+    ctx.moveTo(pts[a].x, pts[a].y);
+    ctx.lineTo(pts[b].x, pts[b].y);
+    ctx.stroke();
+  }
+  // 관절 점
+  ctx.shadowColor = "rgba(150,235,255,0.9)";
+  ctx.shadowBlur = 10 * S();
+  for (let i = 0; i < pts.length; i++) {
+    ctx.beginPath();
+    ctx.arc(pts[i].x, pts[i].y, (i === 8 ? 9 : 5.5) * S(), 0, Math.PI * 2); // 칼끝(검지)은 크게
+    ctx.fillStyle = i === 8 ? "rgba(255,255,255,1)" : "rgba(200,245,255,0.95)";
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+// 검정 배경 위에 손 뼈대를 그린다
+function drawSkeletons(now) {
+  if (!lastResults || video.readyState < 2) return;
+  const m = coverMap();
+  for (const lm of lastResults.landmarks) {
+    drawOneHand(lm.map((p) => toCanvas(p, m)));
+  }
+}
+
+// 선분(ax,ay)-(bx,by)이 원(cx,cy,r)과 만나는지
+function segCircleHit(ax, ay, bx, by, cx, cy, r) {
+  const dx = bx - ax, dy = by - ay;
+  const len2 = dx * dx + dy * dy || 1;
+  let t = ((cx - ax) * dx + (cy - ay) * dy) / len2;
+  t = Math.max(0, Math.min(1, t));
+  const px = ax + t * dx, py = ay + t * dy;
+  return (px - cx) ** 2 + (py - cy) ** 2 <= r * r;
+}
+
+function drawBlades(now) {
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  for (const [key, b] of blades) {
+    if (now - b.lastSeen > 200 || b.trail.length < 2) continue;
+    // 자취를 흰 칼날 선으로 (빠를수록 밝게)
+    const bright = Math.min(1, b.speed / SLICE_SPEED);
+    for (let i = 1; i < b.trail.length; i++) {
+      const p0 = b.trail[i - 1], p1 = b.trail[i];
+      const a = (i / b.trail.length) * (0.25 + 0.75 * bright);
+      ctx.strokeStyle = `rgba(255,255,255,${a})`;
+      ctx.lineWidth = (i / b.trail.length) * 12 * S() + 1;
+      ctx.shadowColor = "rgba(255,255,255,0.8)";
+      ctx.shadowBlur = 10 * S();
+      ctx.beginPath();
+      ctx.moveTo(p0.x, p0.y); ctx.lineTo(p1.x, p1.y);
+      ctx.stroke();
+    }
+    // 칼끝 점
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, 6 * S(), 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(255,255,255,0.95)";
+    ctx.fill();
+  }
+  ctx.restore();
+  ctx.globalAlpha = 1;
+}
+
+// ── 메인 루프 ────────────────────────────────────────────
+let handLandmarker = null;
+let lastVideoTime = -1;
+let lastFrameTime = performance.now();
+let lastResults = null;
+let ready = false;
+
+function resize() {
+  canvas.width = window.innerWidth * devicePixelRatio;
+  canvas.height = window.innerHeight * devicePixelRatio;
+  canvas.style.width = window.innerWidth + "px";
+  canvas.style.height = window.innerHeight + "px";
+}
+window.addEventListener("resize", resize);
+resize();
+
+// 점수·콤보 초기화
+function resetGame() {
+  score = 0; combo = 0; bestCombo = 0; started = false;
+  scoreEl.textContent = "🍉 0   🔥 0";
+}
+
+// 대기 상태로 전환: 점수 초기화 + 화면의 수박·잔해 정리
+function toWaiting() {
+  phase = "waiting";
+  resetGame();
+  melons.length = 0; halves.length = 0; juices.length = 0; seeds.length = 0;
+  slashes.length = 0; shockwaves.length = 0; sparks.length = 0; impactTexts.length = 0;
+}
+
+// 안내 문구 표시 & 단계 전환
+function updatePrompt(now, handVisible) {
+  if (!ready) return; // 로딩 문구는 init()이 관리
+
+  if (phase === "playing") {
+    if (handVisible) lastHandSeen = now;
+    if (now - lastHandSeen > HAND_ABSENCE_MS) toWaiting(); // 손 10초 부재 → 대기로
+  } else if (handVisible) {
+    // 대기 중 손이 잡히면 플레이 시작 (수박이 날아다니기 시작)
+    phase = "playing"; started = false; lastHandSeen = now;
+  }
+
+  if (phase === "waiting") {
+    status.textContent = PROMPT_HAND;       // "화면에 손바닥을 보여주세요" (수박 없음)
+    status.style.opacity = "1";
+  } else {
+    status.textContent = PROMPT_SLICE;      // "손을 휘둘러 가르세요"
+    status.style.opacity = started ? "0" : "1"; // 첫 자르기 전까지 표시, 자르면 숨김
+  }
+}
+
+function loop() {
+  const now = performance.now();
+  const dt = Math.min((now - lastFrameTime) / 1000, 0.05);
+  lastFrameTime = now;
+
+  if (window.__pause) { requestAnimationFrame(loop); return; } // 디버그: 렌더 정지
+
+  if (handLandmarker && video.readyState >= 2 && video.currentTime !== lastVideoTime) {
+    lastVideoTime = video.currentTime;
+    lastResults = handLandmarker.detectForVideo(video, now);
+  }
+
+  ctx.clearRect(0, 0, W(), H());
+
+  updateMelons(now, dt);
+  updateDebris(dt);
+  updateImpact(dt);
+
+  // 손 추적·충돌 판정 (그리기 전에 상태만 갱신)
+  const handVisible = !!(lastResults && video.readyState >= 2 && lastResults.landmarks.length > 0);
+  if (handVisible) {
+    lastResults.landmarks.forEach((lm, i) => {
+      const key = lastResults.handedness[i]?.[0]?.categoryName ?? `hand${i}`;
+      processHand(key, lm, now, dt);
+    });
+  }
+  for (const [key, b] of blades) if (now - b.lastSeen > 300) blades.delete(key);
+
+  updatePrompt(now, handVisible);
+
+  // ── 월드 렌더 (화면 흔들림 적용) ──
+  ctx.save();
+  if (shake > 0.4) ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
+  for (const m of melons) drawMelonBody(m.x, m.y, m.r, m.rot);
+  drawDebris();
+  drawImpactWorld();    // 충격파 + 불꽃
+  drawSkeletons(now);   // 손 뼈대
+  drawBlades(now);      // 칼날 자취
+  ctx.restore();
+
+  // ── 화면 고정 오버레이 (섬광·비네트·콤보 HUD·임팩트 텍스트) ──
+  drawImpactScreen(now);
+
+  requestAnimationFrame(loop);
+}
+
+async function init() {
+  loop(); // 카메라 준비 전에도 수박이 날아다니도록 먼저 시작
+  try {
+    status.textContent = "모델 불러오는 중…";
+    const vision = await FilesetResolver.forVisionTasks(
+      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+    );
+    handLandmarker = await HandLandmarker.createFromOptions(vision, {
+      baseOptions: {
+        modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+        delegate: "GPU",
+      },
+      numHands: 2,
+      runningMode: "VIDEO",
+    });
+
+    status.textContent = "카메라 켜는 중…";
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" },
+      audio: false,
+    });
+    video.srcObject = stream;
+    await new Promise((res) => (video.onloadedmetadata = res));
+
+    ready = true;
+    phase = "waiting";
+    status.textContent = PROMPT_HAND; // 처음엔 손바닥을 보여달라는 안내 (수박 없음)
+    status.style.opacity = "1";
+    lastHandSeen = performance.now();
+    unlockAudio();
+  } catch (err) {
+    status.textContent =
+      err.name === "NotAllowedError" ? "카메라 권한을 허용해 주세요" : "오류: " + err.message;
+    console.error(err);
+  }
+}
+
+// 디버그/테스트용
+window.__test = {
+  spawn: () => { spawnMelon(performance.now()); return melons.length; },
+  place: () => { melons.length = 0; melons.push({ x: W() * 0.5, y: H() * 0.45, vx: 0, vy: 0, r: 95 * S(), rot: 0.3, vrot: 0 }); return "placed"; },
+  slice: () => { if (!melons.length) window.__test.place(); const m = melons[0]; sliceMelon(m, 0.35); return { score, halves: halves.length, juices: juices.length, seeds: seeds.length }; },
+  state: () => ({ phase, melons: melons.length, halves: halves.length, score, combo, bestCombo, ready }),
+  dump: () => melons.map((m) => ({ x: +(m.x / W()).toFixed(2), y: +(m.y / H()).toFixed(2), vx: +(m.vx / W()).toFixed(2), vy: +(m.vy / H()).toFixed(2) })),
+  fakeBones: () => {
+    // 카메라 없는 환경에서 뼈대 렌더 검증: 펼친 손 대략 포즈 (정규→화면 좌표)
+    const base = [[0.5,0.92],[0.4,0.84],[0.34,0.75],[0.31,0.66],[0.29,0.58],
+      [0.46,0.6],[0.45,0.45],[0.45,0.35],[0.45,0.27],
+      [0.52,0.58],[0.53,0.42],[0.54,0.31],[0.54,0.22],
+      [0.58,0.6],[0.6,0.45],[0.61,0.35],[0.62,0.28],
+      [0.62,0.64],[0.66,0.53],[0.68,0.45],[0.69,0.39]];
+    drawOneHand(base.map(([x,y]) => ({ x: x * W(), y: y * H() })));
+    return "skeleton drawn";
+  },
+  // 수박을 화면 밖으로 보내 '놓침' 시뮬 → 콤보 끊김 확인
+  miss: () => { melons.push({ x: -99999, y: 0, vx: 0, vy: 0, r: 50, rot: 0, vrot: 0 }); updateMelons(performance.now(), 0.016); return combo; },
+  comboShot: (c = 8) => {
+    // 정지 상태에서 콤보 HUD만 그려 검증
+    window.__pause = true;
+    combo = c; bestCombo = Math.max(bestCombo, c); lastSliceAt = performance.now();
+    ctx.clearRect(0, 0, W(), H());
+    drawImpactScreen(performance.now());
+    return "combo HUD drawn";
+  },
+  // 안내 문구 / 손 부재 초기화 검증용
+  forceReady: () => { ready = true; phase = "waiting"; status.textContent = PROMPT_HAND; lastHandSeen = performance.now(); return ready; },
+  prompt: (handVisible) => { updatePrompt(performance.now(), handVisible); return { phase, text: status.textContent, opacity: status.style.opacity, started, score }; },
+  trySpawn: () => { lastSpawn = 0; updateMelons(performance.now(), 0.016); return melons.length; },
+  setHandSeen: (agoMs) => { lastHandSeen = performance.now() - agoMs; return agoMs; },
+};
+
+init();
+</script>
+</body>
+</html>
