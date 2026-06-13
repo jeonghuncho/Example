@@ -38,6 +38,17 @@
     backdrop-filter: blur(8px); white-space: nowrap;
     transition: opacity 0.4s;
   }
+  /* 시작 오버레이 — 탭해서 오디오를 켜고 게임을 시작 (브라우저 자동재생 정책) */
+  #start {
+    position: absolute; inset: 0; z-index: 10;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 14px; cursor: pointer;
+    background: rgba(0,0,0,0.82); color: #fff; text-align: center;
+    font-weight: 800; transition: opacity 0.3s;
+  }
+  #start .emoji { font-size: 84px; }
+  #start .title { font-size: 34px; }
+  #start .sub { font-size: 18px; font-weight: 600; opacity: 0.8; }
 </style>
 </head>
 <body>
@@ -46,6 +57,11 @@
   <canvas id="canvas"></canvas>
   <div id="score">🍉 0</div>
   <div id="status">모델 불러오는 중…</div>
+  <div id="start">
+    <div class="emoji">🍉</div>
+    <div class="title">화면을 탭하면 시작!</div>
+    <div class="sub">소리를 켜고 수박 자르기를 시작합니다</div>
+  </div>
 </div>
 
 <script type="module">
@@ -122,6 +138,16 @@ function unlockAudio() {
 }
 ["pointerdown", "touchstart", "keydown"].forEach((e) =>
   window.addEventListener(e, unlockAudio));
+
+// 시작 오버레이: 탭하면 오디오를 확실히 켜고(사용자 제스처) 오버레이를 숨긴다.
+// 게임은 손동작만 쓰므로, 이 탭이 없으면 브라우저가 소리를 막아 무음이 된다.
+const startOverlay = document.getElementById("start");
+function dismissStart() {
+  unlockAudio();
+  startOverlay.style.opacity = "0";
+  setTimeout(() => (startOverlay.style.display = "none"), 300);
+}
+startOverlay.addEventListener("pointerdown", dismissStart);
 
 function playSmash() {
   if (!audioCtx || audioCtx.state !== "running" || !smashBuffer) return;
@@ -832,6 +858,8 @@ async function init() {
 
 // 디버그/테스트용
 window.__test = {
+  tapStart: () => { dismissStart(); return { display: startOverlay.style.display }; },
+  audio: () => ({ ctx: !!audioCtx, state: audioCtx?.state ?? "none", smashLoaded: !!smashBuffer }),
   spawn: () => { spawnMelon(performance.now()); return melons.length; },
   place: () => { melons.length = 0; melons.push({ x: W() * 0.5, y: H() * 0.45, vx: 0, vy: 0, r: 95 * S(), rot: 0.3, vrot: 0 }); return "placed"; },
   slice: () => { if (!melons.length) window.__test.place(); const m = melons[0]; sliceMelon(m, 0.35); return { score, halves: halves.length, juices: juices.length, seeds: seeds.length }; },
