@@ -176,6 +176,32 @@ const slashes = [];   // 칼자국 선
 let score = 0;
 let lastSpawn = 0;
 
+// ── 과일 종류 (색·점수·크기·등장확률) ────────────────────
+const FRUITS = [
+  { id: "watermelon", rind: "#2f7d34", rind2: "#5db85d", flesh: ["#ff5a6e", "#e23b53"], score: 1, rscale: 1.0,  weight: 30, stripes: true,  seeds: true },
+  { id: "apple",      rind: "#b5271b", rind2: "#e8493b", flesh: ["#fff0d8", "#ffd8a8"], score: 2, rscale: 0.6,  weight: 22 },
+  { id: "orange",     rind: "#d4691a", rind2: "#f39c12", flesh: ["#ffd27a", "#ffb24d"], score: 2, rscale: 0.64, weight: 20 },
+  { id: "lemon",      rind: "#cfa70c", rind2: "#f1c40f", flesh: ["#fff7c4", "#ffe97a"], score: 3, rscale: 0.54, weight: 13 },
+  { id: "golden",     rind: "#9c6b08", rind2: "#ffd700", flesh: ["#fff6c8", "#ffd24d"], score: 8, rscale: 0.68, weight: 5,  special: "golden" },
+  { id: "ice",        rind: "#4f97c4", rind2: "#a9def9", flesh: ["#e6f6ff", "#b8e4ff"], score: 3, rscale: 0.68, weight: 8,  special: "ice" },
+];
+const FRUIT_TOTAL = FRUITS.reduce((s, f) => s + f.weight, 0);
+function pickFruit() {
+  let r = Math.random() * FRUIT_TOTAL;
+  for (const f of FRUITS) { if ((r -= f.weight) < 0) return f; }
+  return FRUITS[0];
+}
+
+// ── 메타 상태 (최고점수·피버·슬로우모션) ─────────────────
+let bestScore = +(localStorage.getItem("wm_best") || 0);
+let fever = false;              // 피버 모드 (점수 2배 + 연출)
+const FEVER_COMBO = 8;          // 이 콤보 이상이면 피버
+let timeScale = 1;              // 1=정상, <1=슬로우모션(얼음 과일)
+
+function updateScoreHud() {
+  scoreEl.textContent = `🍉 ${score}   ⭐ ${bestScore}   🔥 ${bestCombo}`;
+}
+
 // ── 게임 단계 & 안내 문구 ────────────────────────────────
 const PROMPT_HAND  = "✋ 화면에 손바닥을 보여주세요";
 const PROMPT_SLICE = "✋ 손을 빠르게 휘둘러 수박을 가르세요!";
@@ -208,7 +234,8 @@ function comboTier(c) {
 
 // 진입 방향을 랜덤하게 — 아래→위, 위→아래, 좌→우, 우→좌
 function spawnMelon(now) {
-  const r = (70 + Math.random() * 35) * S();
+  const fruit = pickFruit();
+  const r = (70 + Math.random() * 35) * S() * fruit.rscale;
   // 아래→위가 조금 더 자주 나오게 가중
   const pat = ["up", "up", "down", "left", "right"][(Math.random() * 5) | 0];
   let x, y, vx, vy;
@@ -231,7 +258,7 @@ function spawnMelon(now) {
     vy = -(0.35 + Math.random() * 0.35) * H();
   }
   melons.push({ x, y, vx: vx * MELON_SPEED, vy: vy * MELON_SPEED, r, rot: Math.random() * 6.28,
-    vrot: (Math.random() - 0.5) * 2 });
+    vrot: (Math.random() - 0.5) * 2, fruit });
 }
 
 // 수박 전체 속도 배율 (작을수록 느림). 같은 궤적을 유지한 채 더 천천히 움직이게 한다.
@@ -253,77 +280,104 @@ function updateMelons(now, dt) {
     // 화면 밖(아래·좌·우)으로 벗어나면 = 못 자르고 놓침 → 콤보 끊김
     if (m.y - m.r > H() + 60 || m.x < -m.r - 90 || m.x > W() + m.r + 90) {
       melons.splice(i, 1);
-      if (combo > 0) { combo = 0; scoreEl.textContent = `🍉 ${score}   🔥 ${bestCombo}`; }
+      if (combo > 0) { combo = 0; fever = false; updateScoreHud(); } // 놓치면 콤보·피버 끊김
     }
   }
 }
 
-// 수박 한 통 그리기 (껍질+꼭지)
-function drawMelonBody(x, y, r, rot) {
+// 과일 한 통 그리기 (종류별 색·무늬)
+function drawMelonBody(m) {
+  const { x, y, r, rot, fruit } = m;
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(rot);
   // 껍질
   const g = ctx.createRadialGradient(-r * 0.3, -r * 0.3, r * 0.2, 0, 0, r);
-  g.addColorStop(0, "#5db85d");
-  g.addColorStop(1, "#2f7d34");
+  g.addColorStop(0, fruit.rind2);
+  g.addColorStop(1, fruit.rind);
   ctx.fillStyle = g;
   ctx.beginPath();
   ctx.arc(0, 0, r, 0, Math.PI * 2);
   ctx.fill();
-  // 줄무늬
-  ctx.strokeStyle = "rgba(20,80,30,0.55)";
-  ctx.lineWidth = r * 0.09;
-  for (let k = -2; k <= 2; k++) {
-    ctx.beginPath();
-    ctx.ellipse(0, 0, r * (0.32 + 0.001), r, (k * 0.5), -Math.PI / 2, Math.PI / 2);
-    ctx.stroke();
+  // 수박 줄무늬
+  if (fruit.stripes) {
+    ctx.strokeStyle = "rgba(20,80,30,0.55)";
+    ctx.lineWidth = r * 0.09;
+    for (let k = -2; k <= 2; k++) {
+      ctx.beginPath();
+      ctx.ellipse(0, 0, r * 0.32, r, k * 0.5, -Math.PI / 2, Math.PI / 2);
+      ctx.stroke();
+    }
   }
+  // 광택 하이라이트
+  ctx.beginPath();
+  ctx.ellipse(-r * 0.35, -r * 0.4, r * 0.22, r * 0.13, -0.6, 0, Math.PI * 2);
+  ctx.fillStyle = "rgba(255,255,255,0.35)";
+  ctx.fill();
   ctx.restore();
+  // 황금/얼음 특수 외곽 발광 (가산 합성)
+  if (fruit.special) {
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    ctx.strokeStyle = fruit.special === "golden" ? "rgba(255,215,0,0.6)" : "rgba(160,222,249,0.6)";
+    ctx.lineWidth = 5 * S();
+    ctx.beginPath();
+    ctx.arc(x, y, r + 3 * S(), 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
 }
 
 // 갈라진 반쪽 그리기 (단면 과육 보임)
 function drawHalf(h) {
+  const fruit = h.fruit;
   ctx.save();
   ctx.translate(h.x, h.y);
   ctx.rotate(h.angle + h.rot);
   const r = h.r;
-  // 과육(빨강) 반원: 단면이 위(local)를 향하도록 아래쪽 반원을 채움
+  // 과육 반원: 단면이 위(local)를 향하도록 아래쪽 반원을 채움
   ctx.beginPath();
   ctx.arc(0, 0, r, 0, Math.PI);
   ctx.closePath();
   const g = ctx.createLinearGradient(0, 0, 0, r);
-  g.addColorStop(0, "#ff5a6e");
-  g.addColorStop(1, "#e23b53");
+  g.addColorStop(0, fruit.flesh[0]);
+  g.addColorStop(1, fruit.flesh[1]);
   ctx.fillStyle = g;
   ctx.fill();
-  // 껍질 호 (초록)
+  // 껍질 호
   ctx.lineWidth = r * 0.13;
-  ctx.strokeStyle = "#2f7d34";
+  ctx.strokeStyle = fruit.rind;
   ctx.beginPath();
   ctx.arc(0, 0, r - r * 0.04, 0, Math.PI);
   ctx.stroke();
   // 단면 가장자리 밝은 테
   ctx.lineWidth = r * 0.05;
-  ctx.strokeStyle = "rgba(255,225,230,0.9)";
+  ctx.strokeStyle = "rgba(255,255,255,0.85)";
   ctx.beginPath();
   ctx.moveTo(-r, 0); ctx.lineTo(r, 0);
   ctx.stroke();
-  // 단면 씨
-  ctx.fillStyle = "rgba(30,20,20,0.9)";
-  for (const sd of h.seeds) {
-    ctx.beginPath();
-    ctx.ellipse(sd.x * r, sd.y * r, r * 0.035, r * 0.06, 0.4, 0, Math.PI * 2);
-    ctx.fill();
+  // 단면 씨 (씨 있는 과일만)
+  if (fruit.seeds) {
+    ctx.fillStyle = "rgba(30,20,20,0.9)";
+    for (const sd of h.seeds) {
+      ctx.beginPath();
+      ctx.ellipse(sd.x * r, sd.y * r, r * 0.035, r * 0.06, 0.4, 0, Math.PI * 2);
+      ctx.fill();
+    }
   }
   ctx.restore();
 }
 
 function sliceMelon(m, dirAngle) {
   melons.splice(melons.indexOf(m), 1);
-  score++;
+  const fruit = m.fruit;
+  score += fruit.score * (fever ? 2 : 1); // 피버 중엔 2배
+  if (score > bestScore) { bestScore = score; localStorage.setItem("wm_best", bestScore); }
   started = true; // 처음 자르면 안내 문구가 사라진다
   playSmash();
+  if (fruit.special === "ice") timeScale = 0.35;        // 얼음 → 슬로우모션 발동
+  if (fruit.special === "golden")                       // 황금 → 큰 보너스 충격파
+    shockwaves.push({ x: m.x, y: m.y, life: 0, max: 0.6, r0: m.r, r1: m.r * 9, rgb: "255,215,80" });
 
   // 단면용 씨 배치 (반원 내부, y는 0~1 아래쪽)
   const makeSeeds = () => {
@@ -338,7 +392,7 @@ function sliceMelon(m, dirAngle) {
   const nx = Math.cos(dirAngle + Math.PI / 2), ny = Math.sin(dirAngle + Math.PI / 2);
   for (const sign of [1, -1]) {
     halves.push({
-      x: m.x, y: m.y, r: m.r,
+      x: m.x, y: m.y, r: m.r, fruit,
       angle: dirAngle + (sign > 0 ? 0 : Math.PI), // 단면이 칼선을 따라
       rot: 0, vrot: (Math.random() - 0.5) * 3 + sign * 1.2,
       vx: m.vx * 0.4 + nx * sign * sep,
@@ -369,7 +423,8 @@ function sliceMelon(m, dirAngle) {
   combo = combo + 1; // 자를 때마다 콤보 증가 (놓치면 updateMelons에서 0으로 끊김)
   lastSliceAt = tnow;
   if (combo > bestCombo) bestCombo = combo;
-  scoreEl.textContent = `🍉 ${score}   🔥 ${bestCombo}`;
+  if (combo >= FEVER_COMBO) fever = true; // 콤보 쌓이면 피버 모드
+  updateScoreHud();
 
   shake = Math.min(46 * S(), Math.max(shake, (22 + combo * 4) * S())); // 화면 흔들림
   flash = 1;      // 전체 섬광
@@ -509,6 +564,26 @@ function drawImpactWorld() {
 
 // 화면 고정으로 그리는 것: 섬광 + 비네트 + 콤보 HUD + 임팩트 텍스트
 function drawImpactScreen(now) {
+  // 피버 모드: 화면 가장자리 주황 불꽃 + 상단 라벨 (점수 2배 상태)
+  if (fever) {
+    const puls = 0.5 + 0.5 * Math.sin(now / 90);
+    const g = ctx.createRadialGradient(W() / 2, H() / 2, H() * 0.32, W() / 2, H() / 2, H() * 0.8);
+    g.addColorStop(0, "rgba(255,120,0,0)");
+    g.addColorStop(1, `rgba(255,90,0,${0.35 + 0.2 * puls})`);
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W(), H());
+    ctx.save();
+    ctx.textAlign = "center";
+    ctx.font = `900 ${40 * S()}px -apple-system, sans-serif`;
+    ctx.lineWidth = 7 * S();
+    ctx.strokeStyle = "rgba(80,0,0,0.9)";
+    ctx.strokeText("🔥 FEVER ×2 🔥", W() / 2, 92 * S());
+    const fg = ctx.createLinearGradient(0, 60 * S(), 0, 100 * S());
+    fg.addColorStop(0, "#fff2a8"); fg.addColorStop(1, "#ff5a1a");
+    ctx.fillStyle = fg;
+    ctx.fillText("🔥 FEVER ×2 🔥", W() / 2, 92 * S());
+    ctx.restore();
+  }
   if (flash > 0) {
     ctx.save();
     ctx.globalCompositeOperation = "lighter";
@@ -735,7 +810,8 @@ resize();
 // 점수·콤보 초기화
 function resetGame() {
   score = 0; combo = 0; bestCombo = 0; started = false;
-  scoreEl.textContent = "🍉 0   🔥 0";
+  fever = false; timeScale = 1;
+  updateScoreHud();
 }
 
 // 대기 상태로 전환: 점수 초기화 + 화면의 수박·잔해 정리
@@ -783,9 +859,12 @@ function loop() {
 
   ctx.clearRect(0, 0, W(), H());
 
-  updateMelons(now, dt);
-  updateDebris(dt);
-  updateImpact(dt);
+  // 슬로우모션: 게임 업데이트에만 timeScale 적용 (손 추적은 실시간 유지)
+  timeScale += (1 - timeScale) * Math.min(1, 2 * dt); // 점차 정상속도로 복귀
+  const sdt = dt * timeScale;
+  updateMelons(now, sdt);
+  updateDebris(sdt);
+  updateImpact(sdt);
 
   // 손 추적·충돌 판정 (그리기 전에 상태만 갱신)
   const handVisible = !!(lastResults && video.readyState >= 2 && lastResults.landmarks.length > 0);
@@ -802,7 +881,7 @@ function loop() {
   // ── 월드 렌더 (화면 흔들림 적용) ──
   ctx.save();
   if (shake > 0.4) ctx.translate((Math.random() - 0.5) * shake, (Math.random() - 0.5) * shake);
-  for (const m of melons) drawMelonBody(m.x, m.y, m.r, m.rot);
+  for (const m of melons) drawMelonBody(m);
   drawDebris();
   drawImpactWorld();    // 충격파 + 불꽃
   drawSkeletons(now);   // 손 뼈대
@@ -861,7 +940,22 @@ window.__test = {
   tapStart: () => { dismissStart(); return { display: startOverlay.style.display }; },
   audio: () => ({ ctx: !!audioCtx, state: audioCtx?.state ?? "none", smashLoaded: !!smashBuffer }),
   spawn: () => { spawnMelon(performance.now()); return melons.length; },
-  place: () => { melons.length = 0; melons.push({ x: W() * 0.5, y: H() * 0.45, vx: 0, vy: 0, r: 95 * S(), rot: 0.3, vrot: 0 }); return "placed"; },
+  place: (fruitId) => { melons.length = 0; const fruit = FRUITS.find(f => f.id === fruitId) || FRUITS[0]; melons.push({ x: W() * 0.5, y: H() * 0.45, vx: 0, vy: 0, r: 95 * S() * fruit.rscale, rot: 0.3, vrot: 0, fruit }); return "placed " + fruit.id; },
+  fruits: () => FRUITS.map(f => f.id),
+  shot: (fruitId) => {
+    window.__pause = true; fever = true;
+    melons.length = 0; halves.length = 0;
+    const fr = FRUITS.find(f => f.id === fruitId) || FRUITS[0];
+    const cx = W() / 2, cy = H() * 0.45, r = 110 * S() * fr.rscale;
+    melons.push({ x: cx, y: cy, vx: 0, vy: 0, r, rot: 0.3, vrot: 0, fruit: fr });
+    halves.push({ x: cx + 160 * S(), y: cy, r: 90 * S(), fruit: fr, angle: 0.4, rot: 0, vrot: 0, vx: 0, vy: 0, seeds: [{x:0,y:0.4},{x:0.3,y:0.5},{x:-0.3,y:0.6}], life: 0 });
+    ctx.clearRect(0, 0, W(), H());
+    for (const m of melons) drawMelonBody(m);
+    for (const h of halves) drawHalf(h);
+    drawImpactScreen(performance.now());
+    return "shot " + fr.id;
+  },
+  st: () => ({ score, bestScore, combo, fever, timeScale: +timeScale.toFixed(2) }),
   slice: () => { if (!melons.length) window.__test.place(); const m = melons[0]; sliceMelon(m, 0.35); return { score, halves: halves.length, juices: juices.length, seeds: seeds.length }; },
   state: () => ({ phase, melons: melons.length, halves: halves.length, score, combo, bestCombo, ready }),
   dump: () => melons.map((m) => ({ x: +(m.x / W()).toFixed(2), y: +(m.y / H()).toFixed(2), vx: +(m.vx / W()).toFixed(2), vy: +(m.vy / H()).toFixed(2) })),
@@ -892,6 +986,7 @@ window.__test = {
   setHandSeen: (agoMs) => { lastHandSeen = performance.now() - agoMs; return agoMs; },
 };
 
+updateScoreHud(); // 시작 시 최고점수 표시
 init();
 </script>
 </body>
