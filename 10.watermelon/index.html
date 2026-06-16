@@ -205,6 +205,8 @@ function updateScoreHud() {
 // ── 게임 단계 & 안내 문구 ────────────────────────────────
 const PROMPT_HAND  = "✋ 화면에 손바닥을 보여주세요";
 const PROMPT_SLICE = "✋ 손을 빠르게 휘둘러 수박을 가르세요!";
+const PROMPT_FAR   = "🖐️ 손을 조금만 뒤로 떨어뜨려 주세요";
+const TOO_CLOSE = 0.34; // 손바닥(손목~중지뿌리) 정규길이가 이 값 이상이면 카메라에 너무 가까움
 let phase = "waiting";        // "waiting"(손 대기, 수박 없음) | "playing"(수박 등장)
 let started = false;          // 첫 수박을 잘랐는지 (자르면 안내 문구 숨김)
 let lastHandSeen = 0;         // 마지막으로 손이 보인 시각
@@ -823,7 +825,7 @@ function toWaiting() {
 }
 
 // 안내 문구 표시 & 단계 전환
-function updatePrompt(now, handVisible) {
+function updatePrompt(now, handVisible, tooClose) {
   if (!ready) return; // 로딩 문구는 init()이 관리
 
   if (phase === "playing") {
@@ -834,6 +836,13 @@ function updatePrompt(now, handVisible) {
     phase = "playing"; started = false; lastHandSeen = now;
   }
 
+  // 손이 카메라에 너무 가까우면 거리 안내를 최우선으로 표시
+  if (tooClose) {
+    status.textContent = PROMPT_FAR;
+    status.style.opacity = "1";
+    return;
+  }
+
   if (phase === "waiting") {
     status.textContent = PROMPT_HAND;       // "화면에 손바닥을 보여주세요" (수박 없음)
     status.style.opacity = "1";
@@ -841,6 +850,14 @@ function updatePrompt(now, handVisible) {
     status.textContent = PROMPT_SLICE;      // "손을 휘둘러 가르세요"
     status.style.opacity = started ? "0" : "1"; // 첫 자르기 전까지 표시, 자르면 숨김
   }
+}
+
+// 손이 카메라에 너무 가까운지: 손바닥(손목~중지뿌리) 정규 길이로 판정
+function isHandTooClose(landmarks) {
+  for (const lm of landmarks) {
+    if (Math.hypot(lm[0].x - lm[9].x, lm[0].y - lm[9].y) > TOO_CLOSE) return true;
+  }
+  return false;
 }
 
 function loop() {
@@ -868,6 +885,7 @@ function loop() {
 
   // 손 추적·충돌 판정 (그리기 전에 상태만 갱신)
   const handVisible = !!(lastResults && video.readyState >= 2 && lastResults.landmarks.length > 0);
+  const tooClose = handVisible && isHandTooClose(lastResults.landmarks);
   if (handVisible) {
     lastResults.landmarks.forEach((lm, i) => {
       const key = lastResults.handedness[i]?.[0]?.categoryName ?? `hand${i}`;
@@ -876,7 +894,7 @@ function loop() {
   }
   for (const [key, b] of blades) if (now - b.lastSeen > 300) blades.delete(key);
 
-  updatePrompt(now, handVisible);
+  updatePrompt(now, handVisible, tooClose);
 
   // ── 월드 렌더 (화면 흔들림 적용) ──
   ctx.save();
@@ -981,7 +999,8 @@ window.__test = {
   },
   // 안내 문구 / 손 부재 초기화 검증용
   forceReady: () => { ready = true; phase = "waiting"; status.textContent = PROMPT_HAND; lastHandSeen = performance.now(); return ready; },
-  prompt: (handVisible) => { updatePrompt(performance.now(), handVisible); return { phase, text: status.textContent, opacity: status.style.opacity, started, score }; },
+  prompt: (handVisible, tooClose) => { updatePrompt(performance.now(), handVisible, tooClose); return { phase, text: status.textContent, opacity: status.style.opacity, started, score }; },
+  closeCheck: (palmLen) => { const lm = Array.from({ length: 21 }, () => ({ x: 0.5, y: 0.5 })); lm[0] = { x: 0.5, y: 0.5 }; lm[9] = { x: 0.5, y: 0.5 - palmLen }; return isHandTooClose([lm]); },
   trySpawn: () => { lastSpawn = 0; updateMelons(performance.now(), 0.016); return melons.length; },
   setHandSeen: (agoMs) => { lastHandSeen = performance.now() - agoMs; return agoMs; },
 };
